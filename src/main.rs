@@ -2,6 +2,7 @@
 #![allow(unused_must_use)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
+mod camera;
 mod capture;
 mod geom;
 mod i18n;
@@ -166,9 +167,12 @@ fn accepts_command(mode: Mode, id: i32, region_open: bool) -> bool {
                 | ui::ID_ABOUT_LOGS
                 | ui::ID_ABOUT_GITHUB
                 | ui::ID_COPY_OUTPUT
+                | ui::ID_OPEN_OUTPUT
                 | ui::ID_SOURCE_CLOSE
+                | ui::ID_CAMERA_CLOSE
         )
-        || (ui::SOURCE_ROW_BASE..500).contains(&id)
+        || (ui::SOURCE_ROW_BASE..ui::CAMERA_ROW_BASE).contains(&id)
+        || (ui::CAMERA_ROW_BASE..600).contains(&id)
         || ui::history_click(id).is_some()
 }
 
@@ -193,6 +197,7 @@ enum RecordingKind {
     Video,
     Animation,
     Audio,
+    Camera,
 }
 
 /// Whether the picture stored on a profile is part of this take.
@@ -286,6 +291,7 @@ fn recording_tip(kind: RecordingKind, seconds: u64) -> String {
         RecordingKind::Video => tr("video"),
         RecordingKind::Animation => tr("animation"),
         RecordingKind::Audio => tr("audio"),
+        RecordingKind::Camera => tr("camera video"),
     };
     trf(
         "Capture Button — recording {kind} {time}",
@@ -407,6 +413,9 @@ struct App {
     hide_region: bool,
     pending_window: bool,
     pending_resilient: bool,
+    pending_camera: Option<crate::camera::CameraIndex>,
+    pending_cameras: Vec<crate::camera::CameraIndex>,
+    pending_camera_action: Option<bool>,
     quit_after_save: bool,
     last_second: u64,
     outline: outline::RegionOutline,
@@ -450,6 +459,9 @@ impl App {
             hide_region: true,
             pending_window: false,
             pending_resilient: false,
+            pending_camera: None,
+            pending_cameras: Vec::new(),
+            pending_camera_action: None,
             quit_after_save: false,
             last_second: u64::MAX,
             outline: outline::RegionOutline::new(),
@@ -825,7 +837,14 @@ impl App {
             ID_SHOT_SOURCE => self.capture_source(true),
             ui::ID_SOURCE_CLOSE => self.controls.close_sources(),
             ui::ID_COPY_OUTPUT => self.copy_output(),
-            id if (ui::SOURCE_ROW_BASE..500).contains(&id) => {
+            ui::ID_OPEN_OUTPUT => self.open_output(),
+            ui::ID_CAMERA_PHOTO => self.camera_action(true),
+            ui::ID_CAMERA_VIDEO => self.camera_action(false),
+            ui::ID_CAMERA_CLOSE => self.controls.close_cameras(),
+            id if (ui::CAMERA_ROW_BASE..600).contains(&id) => {
+                self.finish_camera((id - ui::CAMERA_ROW_BASE) as usize)
+            }
+            id if (ui::SOURCE_ROW_BASE..ui::CAMERA_ROW_BASE).contains(&id) => {
                 self.finish_source((id - ui::SOURCE_ROW_BASE) as usize)
             }
             ID_STOP | ID_TRAY_STOP => self.stop_capture(),
@@ -885,6 +904,64 @@ impl App {
             sources.into_iter().map(|source| source.label).collect(),
             monitors,
         );
+    }
+
+    fn camera_action(&mut self, photo: bool) {
+        if self.mode != Mode::Idle {
+            return;
+        }
+        self.controls.read_ui(&mut self.settings, true);
+        let cameras = match camera::list() {
+            Ok(cameras) => cameras,
+            Err(error) => {
+                self.error(&error);
+                return;
+            }
+        };
+        if cameras.is_empty() {
+            self.error(&tr("No cameras were found"));
+            return;
+        }
+        if cameras.len() == 1 {
+            let index = cameras[0].index.clone();
+            self.start_camera(&index, photo);
+            return;
+        }
+        self.pending_camera_action = Some(photo);
+        self.pending_cameras = cameras.iter().map(|camera| camera.index.clone()).collect();
+        self.controls
+            .show_cameras(cameras.into_iter().map(|camera| camera.name).collect());
+    }
+
+    fn finish_camera(&mut self, index: usize) {
+        self.controls.close_cameras();
+        let photo = self.pending_camera_action.take().unwrap_or(false);
+        let camera = if index < self.pending_cameras.len() {
+            Some(self.pending_cameras[index].clone())
+        } else {
+            None
+        };
+        self.pending_cameras.clear();
+        if let Some(camera) = camera {
+            self.start_camera(&camera, photo);
+        }
+    }
+
+    fn start_camera(&mut self, index: &crate::camera::CameraIndex, photo: bool) {
+        if self.mode != Mode::Idle {
+            return;
+        }
+        if photo {
+            self.controls.read_ui(&mut self.settings, true);
+            match camera::photo(index) {
+                Ok(path) => self.completed(path),
+                Err(error) => self.error(&error),
+            }
+            self.update_state();
+            return;
+        }
+        self.pending_camera = Some(index.clone());
+        self.start_capture(ProfileRef::Capture, Take::Picture, None, false, false, None);
     }
 
     fn finish_source(&mut self, index: usize) {
@@ -1099,15 +1176,16 @@ impl App {
             return;
         }
         let (profile, audio_only) = recording.session();
+        let camera = self.pending_camera.take();
         self.conceal_for_ui(hide);
-        self.region_outline = region && !audio_only;
-        self.record_rect = if audio_only {
+        self.region_outline = region && !audio_only && camera.is_none();
+        self.record_rect = if audio_only || camera.is_some() {
             None
         } else {
             Some(rect.unwrap_or_else(media::cursor_monitor_rect))
         };
-        let window = self.pending_window;
-        let resilient = self.pending_resilient || window;
+        let window = self.pending_window && camera.is_none();
+        let resilient = camera.is_none() && (self.pending_resilient || window);
         self.pending_window = false;
         self.pending_resilient = false;
         let recorded_format = profile.format;
@@ -1120,6 +1198,7 @@ impl App {
             audio_only,
             threads: self.settings.threads,
             window,
+            camera: camera.clone(),
             resilient,
             show_no_signal: self.settings.show_no_signal,
             show_card: self.settings.show_card,
@@ -1133,7 +1212,11 @@ impl App {
                 self.live_gain_id = Some(gain_id);
                 self.started = Some(Instant::now());
                 self.last_second = u64::MAX;
-                self.recording_kind = recording_kind_for(audio_only, region, recorded_format);
+                self.recording_kind = if camera.is_some() {
+                    RecordingKind::Camera
+                } else {
+                    recording_kind_for(audio_only, region, recorded_format)
+                };
                 self.mode = Mode::Recording;
                 self.update_state();
                 self.sync_outline();
@@ -1351,6 +1434,20 @@ impl App {
     fn open_path(&mut self, path: &std::path::Path) {
         self.copy_text(path);
         self.reveal(path);
+    }
+
+    fn open_output(&mut self) {
+        let result = media::output_dir().and_then(|dir| {
+            std::process::Command::new("explorer.exe")
+                .arg(dir)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        });
+        match result {
+            Ok(()) => logging::info("opened output folder"),
+            Err(error) => self.error(&error),
+        }
     }
 
     fn copy_output(&mut self) {

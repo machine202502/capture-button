@@ -119,6 +119,15 @@
     "Audio capture": "Audio capture",
     "Record video": "Record video",
     "Record audio": "Record audio",
-    "Capture Button could not start: {error}": "Capture Button could not start: {error}"
+    "Capture Button could not start: {error}": "Capture Button could not start: {error}",
+    "Camera": "Camera",
+    "Camera photo": "Camera photo",
+    "Camera video": "Camera video",
+    "Choose camera": "Choose camera",
+    "No cameras were found": "No cameras were found",
+    "camera video": "camera video",
+    "Unsupported camera format": "Unsupported camera format",
+    "The camera returned an empty frame": "The camera returned an empty frame",
+    "The MJPEG decoder is unavailable": "The MJPEG decoder is unavailable"
   }
 }

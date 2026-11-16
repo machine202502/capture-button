@@ -119,6 +119,15 @@
     "Audio capture": "音频录制",
     "Record video": "录制视频",
     "Record audio": "录制音频",
-    "Capture Button could not start: {error}": "Capture Button 无法启动：{error}"
+    "Capture Button could not start: {error}": "Capture Button 无法启动：{error}",
+    "Camera": "摄像头",
+    "Camera photo": "摄像头拍照",
+    "Camera video": "摄像头录制",
+    "Choose camera": "选择摄像头",
+    "No cameras were found": "未找到摄像头",
+    "camera video": "摄像头视频",
+    "Unsupported camera format": "不支持的摄像头格式",
+    "The camera returned an empty frame": "摄像头返回了空帧",
+    "The MJPEG decoder is unavailable": "MJPEG 解码器不可用"
   }
 }

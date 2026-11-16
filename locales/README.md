@@ -1,12 +1,12 @@
-﻿# Interface translations
+# Interface translations
 
 `Capture Button` reads its window and tray texts from these JSON catalogs. Nothing is
 compiled into the executable, so a language can be fixed or added by editing a
 file.
 
-- `ru.json` вЂ” Р СѓСЃСЃРєРёР№
-- `en.json` вЂ” English (also the fallback; the keys are the English source strings)
-- `zh.json` вЂ” дё­ж–‡
+- `ru.json` — Russian
+- `en.json` — English (also the fallback; the keys are the English source strings)
+- `zh.json` — Chinese
 
 English is also compiled into `CaptureButton.exe`, so the portable zip ships no locale
 files at all and works in English on its own. The installer puts this folder next
@@ -20,15 +20,15 @@ placed next to the executable.
 ```json
 {
   "code": "ru",
-  "name": "Р СѓСЃСЃРєРёР№",
+  "name": "Русский",
   "strings": {
-    "Settings": "РќР°СЃС‚СЂРѕР№РєРё",
+    "Settings": "Настройки",
     "{fps} FPS": "{fps} FPS"
   }
 }
 ```
 
-- `code` is the file's language code and what **Settings в†’ Language** saves.
+- `code` is the file's language code and what **Settings → Language** saves.
 - `name` is the native name shown in that list.
 - `strings` maps an English source string to its translation. A missing key
   falls back to the English text, so a partial catalog is safe.
@@ -39,8 +39,7 @@ placed next to the executable.
 
 ## Applying a change
 
-The language is chosen in **Settings в†’ Language** ("System" follows the Windows
+The language is chosen in **Settings → Language** ("System" follows the Windows
 display language). Labels are created when the window opens, so the choice
 applies on the next start; the dialog says so. Adding a catalog file makes it
 appear in the list immediately.
-

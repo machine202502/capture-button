@@ -607,6 +607,7 @@ struct Live {
     clock: Instant,
     inputs: Vec<AudioIn>,
     video: Option<VideoCapture>,
+    camera: Option<crate::camera::CameraSource>,
     writer: media::VideoWriter,
     last: Option<Frame>,
     recover: Option<Window>,
@@ -710,46 +711,55 @@ impl Live {
         let loop_result = loop {
             let mut fate = SourceFate::Live;
             if !options.audio_only {
-                let usable = self.recover.map(window_usable).unwrap_or(true);
-                let resumed = self.resilient && usable && !self.was_usable;
-                self.was_usable = usable;
-                let alive = self
-                    .video
-                    .as_ref()
-                    .is_some_and(|source| source.capture_alive());
-                if self.resilient
-                    && usable
-                    && (resumed || !alive)
-                    && Instant::now() >= self.next_retry
-                {
-                    // Restoring a minimized window restarts capture and blocks this loop.
-                    // Audio captured during that wait is muxed before the frame stamped after it.
-                    self.try_recover(options.profile.video.fps, resumed);
-                    self.next_retry = Instant::now() + Duration::from_millis(250);
-                }
-                let arrived = self.video.as_mut().and_then(|source| source.latest());
-                let alive = self
-                    .video
-                    .as_ref()
-                    .is_some_and(|source| source.capture_alive());
-                let signal = signal_present(self.resilient, usable, alive, arrived.is_some());
-                fate = source_fate(self.resilient, signal, self.show_no_signal, self.show_card);
-                if let Some(frame) = arrived {
-                    if fate == SourceFate::Live {
-                        self.last = Some(if self.resilient {
-                            fit_into(frame, self.rect.w, self.rect.h)
-                        } else {
-                            fit(frame, self.rect.w, self.rect.h)
-                        });
+                if let Some(source) = self.camera.as_mut() {
+                    match source.frame() {
+                        Ok(frame) => {
+                            self.last = Some(fit(frame, self.rect.w, self.rect.h));
+                        }
+                        Err(error) => break Err(error),
                     }
-                } else if !self.resilient {
-                    let grabbed = if self.cursor {
-                        media::grab(self.rect)
-                    } else {
-                        media::grab_without_cursor(self.rect)
-                    };
-                    if let Ok(frame) = grabbed {
-                        self.last = Some(frame);
+                } else {
+                    let usable = self.recover.map(window_usable).unwrap_or(true);
+                    let resumed = self.resilient && usable && !self.was_usable;
+                    self.was_usable = usable;
+                    let alive = self
+                        .video
+                        .as_ref()
+                        .is_some_and(|source| source.capture_alive());
+                    if self.resilient
+                        && usable
+                        && (resumed || !alive)
+                        && Instant::now() >= self.next_retry
+                    {
+                        // Restoring a minimized window restarts capture and blocks this loop.
+                        // Audio captured during that wait is muxed before the frame stamped after it.
+                        self.try_recover(options.profile.video.fps, resumed);
+                        self.next_retry = Instant::now() + Duration::from_millis(250);
+                    }
+                    let arrived = self.video.as_mut().and_then(|source| source.latest());
+                    let alive = self
+                        .video
+                        .as_ref()
+                        .is_some_and(|source| source.capture_alive());
+                    let signal = signal_present(self.resilient, usable, alive, arrived.is_some());
+                    fate = source_fate(self.resilient, signal, self.show_no_signal, self.show_card);
+                    if let Some(frame) = arrived {
+                        if fate == SourceFate::Live {
+                            self.last = Some(if self.resilient {
+                                fit_into(frame, self.rect.w, self.rect.h)
+                            } else {
+                                fit(frame, self.rect.w, self.rect.h)
+                            });
+                        }
+                    } else if !self.resilient {
+                        let grabbed = if self.cursor {
+                            media::grab(self.rect)
+                        } else {
+                            media::grab_without_cursor(self.rect)
+                        };
+                        if let Ok(frame) = grabbed {
+                            self.last = Some(frame);
+                        }
                     }
                 }
             }
@@ -866,6 +876,8 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
     }
     let output = if options.audio_only {
         media::output_path("Audio", "mp3")?
+    } else if options.camera.is_some() {
+        media::output_path("Camera", options.profile.format.extension())?
     } else {
         media::output_path(
             if options.profile.format == Format::Mkv {
@@ -904,7 +916,19 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
         )?);
     }
     let mut recover = None;
-    let mut video = if options.audio_only {
+    let mut camera = None;
+    let mut camera_frame = None;
+    if !options.audio_only {
+        if let Some(index) = options.camera.as_ref() {
+            let mut source = crate::camera::CameraSource::open(index)?;
+            let frame = source.frame()?;
+            rect.w = frame.width.max(2) & !1;
+            rect.h = frame.height.max(2) & !1;
+            camera_frame = Some(frame);
+            camera = Some(source);
+        }
+    }
+    let mut video = if options.audio_only || camera.is_some() {
         None
     } else if options.window {
         let window = take_window().ok_or(tr("The window is no longer available"))?;
@@ -960,9 +984,9 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
     let last = if options.audio_only {
         None
     } else {
-        let raw = video
-            .as_mut()
-            .and_then(|source| source.latest())
+        let raw = camera_frame
+            .take()
+            .or_else(|| video.as_mut().and_then(|source| source.latest()))
             .or_else(|| {
                 if options.cursor {
                     media::grab(rect).ok()
@@ -991,10 +1015,11 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
         clock,
         inputs,
         video,
+        camera,
         writer,
         last,
         recover,
-        resilient: options.resilient || options.window,
+        resilient: (options.resilient || options.window) && options.camera.is_none(),
         show_no_signal: options.show_no_signal,
         show_card: options.show_card,
         cursor: options.cursor,

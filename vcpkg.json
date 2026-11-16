@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg-json.schema.json",
   "name": "capture-button",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "dependencies": [
     {
       "name": "ffmpeg",

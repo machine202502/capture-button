@@ -41,6 +41,11 @@ pub const ID_ABOUT_LOGS: i32 = 283;
 pub const ID_ABOUT_GITHUB: i32 = 284;
 pub const ID_SOURCE_CLOSE: i32 = 285;
 pub const ID_COPY_OUTPUT: i32 = 286;
+pub const ID_OPEN_OUTPUT: i32 = 292;
+pub const ID_CAMERA_PHOTO: i32 = 289;
+pub const ID_CAMERA_VIDEO: i32 = 290;
+pub const ID_CAMERA_CLOSE: i32 = 291;
+pub const CAMERA_ROW_BASE: i32 = 500;
 pub const SOURCE_ROW_BASE: i32 = 400;
 pub const ID_FORMAT: i32 = 110;
 pub const ID_PRESET: i32 = 120;
@@ -586,6 +591,10 @@ fn sync_labels(ui: &MainWindow) {
     labels.set_frame_rate(tr("Frame rate").into());
     labels.set_audio(tr("Audio").into());
     labels.set_audio_capture(tr("Audio capture").into());
+    labels.set_camera(tr("Camera").into());
+    labels.set_camera_photo(tr("Camera photo").into());
+    labels.set_camera_video(tr("Camera video").into());
+    labels.set_camera_choose(tr("Choose camera").into());
     labels.set_system_audio(tr("System audio").into());
     labels.set_microphone(tr("Microphone").into());
     labels.set_show_cursor(tr("Show the mouse cursor").into());
@@ -765,6 +774,15 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_saving(model.saving);
     ui.set_about_open(model.about_open);
     ui.set_source_open(model.source_open);
+    ui.set_camera_open(model.camera_open);
+    ui.set_camera_items(slint::ModelRc::new(slint::VecModel::from(
+        model
+            .camera_items
+            .iter()
+            .cloned()
+            .map(slint::SharedString::from)
+            .collect::<Vec<_>>(),
+    )));
     ui.set_source_monitors(model.source_monitors as i32);
     ui.set_history_ack(model.history_ack.unwrap_or(-1));
     ui.set_source_monitor_items(slint::ModelRc::new(slint::VecModel::from(
@@ -876,6 +894,8 @@ struct Model {
     scale_setting: u32,
     about_open: bool,
     source_open: bool,
+    camera_open: bool,
+    camera_items: Vec<String>,
     source_monitor_items: Vec<String>,
     source_window_items: Vec<String>,
     source_monitors: usize,
@@ -957,6 +977,17 @@ impl Controls {
 
     pub fn close_sources(&self) {
         self.update(|model| model.source_open = false);
+    }
+
+    pub fn show_cameras(&self, items: Vec<String>) {
+        self.update(|model| {
+            model.camera_items = items;
+            model.camera_open = !model.camera_items.is_empty();
+        });
+    }
+
+    pub fn close_cameras(&self) {
+        self.update(|model| model.camera_open = false);
     }
 
     pub fn set_idle(&self, idle: bool, recording: bool) {

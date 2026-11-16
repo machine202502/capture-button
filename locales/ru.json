@@ -119,6 +119,15 @@
     "Audio capture": "Запись звука",
     "Record video": "Записать видео",
     "Record audio": "Записать звук",
-    "Capture Button could not start: {error}": "Capture Button не удалось запустить: {error}"
+    "Capture Button could not start: {error}": "Capture Button не удалось запустить: {error}",
+    "Camera": "Камера",
+    "Camera photo": "Снимок с камеры",
+    "Camera video": "Запись с камеры",
+    "Choose camera": "Выбрать камеру",
+    "No cameras were found": "Камеры не найдены",
+    "camera video": "видео с камеры",
+    "Unsupported camera format": "Неподдерживаемый формат камеры",
+    "The camera returned an empty frame": "Камера вернула пустой кадр",
+    "The MJPEG decoder is unavailable": "Декодер MJPEG недоступен"
   }
 }

@@ -98,6 +98,8 @@ pub struct RecordOptions {
     pub threads: u32,
     /// When set, the staged window is captured instead of `rect`.
     pub window: bool,
+    /// Camera index from `camera::list`; when set, the camera is the video source.
+    pub camera: Option<crate::camera::CameraIndex>,
     /// Keep recording if the chosen monitor or window disappears.
     pub resilient: bool,
     pub show_no_signal: bool,

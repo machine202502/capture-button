@@ -37,6 +37,10 @@ export global Labels {
     in property <string> frame_rate: "";
     in property <string> audio: "";
     in property <string> audio_capture: "";
+    in property <string> camera: "";
+    in property <string> camera_photo: "";
+    in property <string> camera_video: "";
+    in property <string> camera_choose: "";
     in property <string> system_audio: "";
     in property <string> microphone: "";
     in property <string> show_cursor: "";
@@ -404,10 +408,13 @@ export component MainWindow inherits Window {
     in-out property <length> settings-scroll: 0px;
     in-out property <bool> about-open: false;
     in-out property <bool> source-open: false;
+    in-out property <bool> camera-open: false;
+    in-out property <[string]> camera-items: [];
     in-out property <int> source-monitors: 0;
     in-out property <int> history-ack: -1;
     private property <length> triple: (root.width - 72px * ui-scale) / 3;
     private property <length> about-triple: (480px * ui-scale - 48px * ui-scale) / 3;
+    private property <length> half: (root.width - 90px * ui-scale) / 2;
     in-out property <[string]> source-monitor-items: [];
     in-out property <[string]> source-window-items: [];
     in-out property <string> about-recordings: "";
@@ -547,13 +554,21 @@ export component MainWindow inherits Window {
                         }
                         HorizontalLayout {
                             spacing: 4px * ui-scale;
-                            Text {
+                            Rectangle {
+                                height: 16px * ui-scale;
                                 horizontal-stretch: 1;
-                                text: Labels.output_path;
-                                color: Palette.muted;
-                                font-size: 10px * ui-scale;
-                                vertical-alignment: center;
-                                overflow: elide;
+                                background: transparent;
+
+                                Text {
+                                    width: parent.width;
+                                    text: Labels.output_path;
+                                    color: Palette.muted;
+                                    font-size: 10px * ui-scale;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+
+                                TouchArea { clicked => { root.act(292); } }
                             }
                             CopyIcon { clicked => { root.act(286); } }
                         }
@@ -639,6 +654,13 @@ export component MainWindow inherits Window {
                             OceanButton { width: root.triple; primary: true; label: Labels.record_screen; enabled: root.can-capture; clicked => { root.act(132); } }
                             OceanButton { width: root.triple; label: Labels.choose_source; enabled: root.can-capture; clicked => { root.act(148); } }
                             OceanButton { width: root.triple; label: Labels.area_capture; enabled: root.can-capture; clicked => { root.act(133); } }
+                        }
+
+                        SectionTitle { text: Labels.camera; }
+                        HorizontalLayout {
+                            spacing: 6px * ui-scale;
+                            OceanButton { width: root.half; label: Labels.camera_photo; enabled: root.can-capture; clicked => { root.act(289); } }
+                            OceanButton { width: root.half; label: Labels.camera_video; enabled: root.can-capture; clicked => { root.act(290); } }
                         }
 
                         SectionTitle { text: Labels.audio_capture; }
@@ -917,6 +939,67 @@ export component MainWindow inherits Window {
         }
     }
 
+    if root.camera-open : Rectangle {
+        background: #051a2288;
+
+        TouchArea {
+            scroll-event(event) => { accept }
+            clicked => { root.act(291); }
+        }
+
+        Rectangle {
+            width: 420px * ui-scale;
+            height: 320px * ui-scale;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            border-radius: 16px * ui-scale;
+            background: Palette.card;
+            border-width: 1px;
+            border-color: Palette.line;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00101555;
+            drop-shadow-offset-y: 8px;
+
+            TouchArea {
+                scroll-event(event) => { accept }
+            }
+
+            VerticalLayout {
+                padding: 18px * ui-scale;
+                spacing: 6px * ui-scale;
+
+                Text { text: Labels.camera_choose; color: Palette.ink; font-size: 18px * ui-scale; font-weight: 700; }
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: 10px * ui-scale;
+                    background: Palette.bg;
+                    border-width: 1px;
+                    border-color: Palette.line;
+                    ScrollView {
+                        vertical-scrollbar-policy: as-needed;
+                        content-width: self.width;
+                        content-height: cameras-content.preferred-height;
+                        cameras-content := VerticalLayout {
+                            padding: 4px * ui-scale;
+                            spacing: 2px * ui-scale;
+                            for item[index] in root.camera-items : Rectangle {
+                                height: 32px * ui-scale;
+                                border-radius: 7px * ui-scale;
+                                background: camera-ta.has-hover ? Palette.hover : transparent;
+                                HorizontalLayout {
+                                    padding-left: 8px * ui-scale;
+                                    Text { horizontal-stretch: 1; text: item; color: Palette.ink; font-size: 11px * ui-scale; vertical-alignment: center; overflow: elide; }
+                                }
+                                camera-ta := TouchArea { clicked => { root.act(500 + index); } }
+                            }
+                        }
+                    }
+                }
+                OceanButton { label: Labels.close; clicked => { root.act(291); } }
+            }
+        }
+    }
+
     if root.about-open : Rectangle {
         background: #051a2288;
 
@@ -973,10 +1056,3 @@ export component MainWindow inherits Window {
         }
     }
 }
-
-
-
-
-
-
-
