@@ -200,9 +200,9 @@ impl Registry {
     fn open() -> Option<Self> {
         let mut key = HKEY::default();
         let path = if test_mode() {
-            w!("Software\\ezcap-test")
+            w!("Software\\CaptureButton-test")
         } else {
-            w!("Software\\ezcap")
+            w!("Software\\CaptureButton")
         };
         unsafe {
             // SAFETY: The key is HKCU and the subkey is NUL-terminated. The returned HKEY is closed by its owner.
@@ -274,26 +274,43 @@ impl Registry {
         {
             return default.into();
         }
-        let mut data = vec![0u16; size as usize / 2];
-        if unsafe {
-            // SAFETY: The pointer addresses a live buffer, and the length is exactly that buffer's size.
-
-            RegQueryValueExW(
-                self.key,
-                PCWSTR(name.as_ptr()),
-                None,
-                None,
-                Some(data.as_mut_ptr().cast()),
-                Some(&mut size),
-            )
-        }
-        .is_err()
-        {
+        // A REG_SZ is UTF-16. Read it in a bounded loop instead of trusting one
+        // fixed clamp: the history value can legitimately exceed 4 KiB, and a
+        // value written between the size query and the read reports MORE_DATA.
+        const MAX_BYTES: u32 = 1_048_576;
+        let mut size = size.min(MAX_BYTES);
+        for _ in 0..3 {
+            let capacity = size.clamp(2, MAX_BYTES) & !1;
+            if capacity < 2 {
+                return default.into();
+            }
+            let mut data = vec![0u16; capacity as usize / 2];
+            let mut actual = capacity;
+            let status = unsafe {
+                // SAFETY: The buffer is exactly `capacity` bytes and `actual`
+                // carries that same length into the call.
+                RegQueryValueExW(
+                    self.key,
+                    PCWSTR(name.as_ptr()),
+                    None,
+                    None,
+                    Some(data.as_mut_ptr().cast()),
+                    Some(&mut actual),
+                )
+            };
+            if status.is_ok() {
+                let used = (actual.min(capacity) as usize / 2).min(data.len());
+                return String::from_utf16_lossy(&data[..used])
+                    .trim_end_matches('\0')
+                    .into();
+            }
+            if status == windows::Win32::Foundation::ERROR_MORE_DATA && actual > capacity {
+                size = actual.min(MAX_BYTES);
+                continue;
+            }
             return default.into();
         }
-        String::from_utf16_lossy(&data)
-            .trim_end_matches('\0')
-            .into()
+        default.into()
     }
 
     fn set_string(&self, name: &str, value: &str) {
@@ -547,13 +564,13 @@ fn update_autostart(enabled: bool, minimized: bool) {
         };
         unsafe {
             // SAFETY: The key is open. The name and bytes outlive the call and match the declared size.
-            RegSetValueExW(key, w!("ezcap"), 0, REG_SZ, Some(bytes))
+            RegSetValueExW(key, w!("CaptureButton"), 0, REG_SZ, Some(bytes))
         }
         .ok();
     } else {
         unsafe {
             // SAFETY: The key is open and the value name is a NUL-terminated literal.
-            RegDeleteValueW(key, w!("ezcap"))
+            RegDeleteValueW(key, w!("CaptureButton"))
         }
         .ok();
     }
@@ -764,18 +781,30 @@ mod recording_profiles {
 
 #[cfg(test)]
 mod history_store {
-    use super::{decode_history, encode_history};
+    use super::{decode_history, encode_history, Registry};
     use std::path::PathBuf;
+
+    #[test]
+    fn a_long_registry_string_is_read_past_the_old_four_kib_clamp() {
+        let Some(registry) = Registry::open() else {
+            return;
+        };
+        let value = "x".repeat(5_000);
+        registry.set_string("long_value", &value);
+        assert_eq!(registry.string("long_value", ""), value);
+        // Leave no test payload behind in HKCU.
+        registry.set_string("long_value", "");
+    }
 
     #[test]
     fn the_visible_history_survives_a_restart() {
         let items = vec![
             (
-                PathBuf::from(r"C:\Pictures\ezcap\Video_1.mkv"),
+                PathBuf::from(r"C:\Pictures\CaptureButton\Video_1.mkv"),
                 "4 Nov 2026, 22:56:07".into(),
             ),
             (
-                PathBuf::from(r"C:\Pictures\ezcap\Shot 2.png"),
+                PathBuf::from(r"C:\Pictures\CaptureButton\Shot 2.png"),
                 "4 Nov 2026, 22:01:00".into(),
             ),
         ];

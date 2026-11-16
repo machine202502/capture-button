@@ -733,7 +733,7 @@ if(VCPKG_LIBRARY_LINKAGE STREQUAL "static")
     set(OPTIONS "${OPTIONS} --pkg-config-flags=--static")
 endif()
 
-# ezcap slim overlay: keep only the codecs, muxers and filters the program calls.
+# Capture Button slim overlay: keep only the codecs, muxers and filters the program calls.
 # --disable-everything runs after the feature flags, so the needed pieces are enabled again below.
 if(VCPKG_TARGET_IS_WINDOWS AND NOT VCPKG_TARGET_IS_UWP AND VCPKG_DETECTED_MSVC)
     string(APPEND OPTIONS

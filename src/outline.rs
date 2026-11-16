@@ -14,7 +14,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const CLASS: PCWSTR = w!("ezcap.outline");
+const CLASS: PCWSTR = w!("CaptureButton.outline");
 
 struct Draw {
     width: i32,
@@ -111,7 +111,7 @@ impl RegionOutline {
                     | WS_EX_TOOLWINDOW
                     | WS_EX_NOACTIVATE,
                 CLASS,
-                w!("ezcap recording area"),
+                w!("Capture Button recording area"),
                 WS_POPUP,
                 0,
                 0,

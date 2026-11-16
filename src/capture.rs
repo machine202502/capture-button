@@ -7,7 +7,6 @@
 use crate::geom::{self, AudioQueue};
 use crate::i18n::{tr, trf};
 use crate::media::{self, Format, Frame, RecordOptions, Rect};
-use crate::wide;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 use std::path::{Path, PathBuf};
@@ -15,7 +14,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Graphics::Gdi::{
@@ -23,10 +21,8 @@ use windows::Win32::Graphics::Gdi::{
     MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, GetWindowPlacement, IsIconic,
-    IsWindow, IsWindowVisible, TrackPopupMenu, MF_SEPARATOR, MF_STRING, SW_MINIMIZE,
-    SW_SHOWMINIMIZED, SW_SHOWMINNOACTIVE, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    WINDOWPLACEMENT,
+    GetWindowPlacement, IsIconic, IsWindow, IsWindowVisible, SW_MINIMIZE, SW_SHOWMINIMIZED,
+    SW_SHOWMINNOACTIVE, WINDOWPLACEMENT,
 };
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
 use windows_capture::frame::Frame as WgcFrame;
@@ -247,7 +243,7 @@ fn wait_frame(slot: &Slot, timeout: Duration) -> Result<Frame, String> {
     while guard.is_none() {
         let remaining = timeout.saturating_sub(start.elapsed());
         if remaining.is_zero() {
-            return Err(tr("Windows Graphics Capture did not deliver a frame").into());
+            return Err(tr("Windows Graphics Capture did not deliver a frame"));
         }
         let (next, status) = slot
             .arrived
@@ -356,7 +352,7 @@ pub fn grab_display(rect: Rect) -> Result<Frame, String> {
     rect.w &= !1;
     rect.h &= !1;
     if rect.w == 0 || rect.h == 0 {
-        return Err(tr("The capture area is empty").into());
+        return Err(tr("The capture area is empty"));
     }
     media::grab_without_cursor(rect)
 }
@@ -521,8 +517,8 @@ fn working_path(output: &Path, animate: bool) -> PathBuf {
     let name = output
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("ezcap.bin");
-    std::env::temp_dir().join(format!("ezcap-{name}"))
+        .unwrap_or("CaptureButton.bin");
+    std::env::temp_dir().join(format!("CaptureButton-{name}"))
 }
 
 fn publish_file(from: &Path, to: &Path) -> Result<(), String> {
@@ -828,9 +824,9 @@ impl Live {
             if !keep {
                 let _ = std::fs::remove_file(&self.scratch);
                 return Err(if options.audio_only {
-                    tr("Recording produced no audio").into()
+                    tr("Recording produced no audio")
                 } else {
-                    tr("Recording produced no video").into()
+                    tr("Recording produced no video")
                 });
             }
             publish_file(&self.scratch, &self.output)?;
@@ -866,7 +862,7 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
     rect.w &= !1;
     rect.h &= !1;
     if !options.audio_only && (rect.w < 16 || rect.h < 16) {
-        return Err(tr("Capture area is too small").into());
+        return Err(tr("Capture area is too small"));
     }
     let output = if options.audio_only {
         media::output_path("Audio", "mp3")?
@@ -885,7 +881,9 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
     let audio_requested = (options.audio_only || options.profile.format == Format::Mkv)
         && (options.profile.audio.system || options.profile.audio.microphone);
     if options.audio_only && !audio_requested {
-        return Err(tr("Enable System audio or Microphone before capturing audio").into());
+        return Err(tr(
+            "Enable System audio or Microphone before capturing audio",
+        ));
     }
     let clock = Instant::now();
     let mut inputs = Vec::new();
@@ -1019,7 +1017,7 @@ impl Session {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let thread = std::thread::Builder::new()
-            .name("ezcap-capture".into())
+            .name("CaptureButton-capture".into())
             .spawn(move || {
                 let result = record(options, worker_stop, ready_tx);
                 if let Err(error) = &result {
@@ -1041,7 +1039,7 @@ impl Session {
             Err(_) => {
                 stop.store(true, Ordering::SeqCst);
                 let _ = thread.join();
-                Err(tr("Capture did not start").into())
+                Err(tr("Capture did not start"))
             }
         }
     }
@@ -1074,7 +1072,7 @@ impl Session {
             let fps = prepared.fps;
             let height = prepared.height;
             let worker = std::thread::Builder::new()
-                .name("ezcap-encode".into())
+                .name("CaptureButton-encode".into())
                 .spawn(move || {
                     media::convert_animation(&scratch, &output, format, fps, height)?;
                     let _ = std::fs::remove_file(&scratch);
@@ -1219,7 +1217,7 @@ mod source_card {
         assert!(!source_row(false, true, 1200, 800, "Clock"));
         assert!(!source_row(false, false, 314, 50, "Clock"));
         assert!(!source_row(false, false, 314, 50, "Kimi"));
-        assert!(!source_row(false, false, 800, 600, "ezcap"));
+        assert!(!source_row(false, false, 800, 600, "Capture Button"));
         assert!(source_row(false, false, 1280, 720, "Notes"));
     }
 
@@ -1385,9 +1383,72 @@ fn take_window() -> Option<Window> {
         .take()
 }
 
+#[derive(Clone, Copy)]
 pub enum Chosen {
     Monitor(Rect),
     Window(Rect),
+}
+
+pub struct SourceEntry {
+    pub label: String,
+    pub monitor: bool,
+    chosen: Chosen,
+    window: Option<Window>,
+}
+
+/// The sources offered by the in-app picker, in a stable order.
+pub fn list_sources() -> Vec<SourceEntry> {
+    let monitors = monitor_list();
+    let mut windows = Window::enumerate().unwrap_or_default();
+    windows.retain(listed_window);
+    let mut entries = Vec::new();
+    for (index, monitor) in monitors.iter().enumerate() {
+        entries.push(SourceEntry {
+            label: format!(
+                "{} {}  -  {}x{}",
+                tr("Monitor"),
+                index + 1,
+                monitor.w,
+                monitor.h
+            ),
+            chosen: Chosen::Monitor(*monitor),
+            monitor: true,
+            window: None,
+        });
+    }
+    for window in windows {
+        let title = window.title().unwrap_or_else(|_| "Window".into());
+        let (w, h) = window
+            .rect()
+            .map(|rect| {
+                (
+                    (rect.right - rect.left).max(0) as u32,
+                    (rect.bottom - rect.top).max(0) as u32,
+                )
+            })
+            .unwrap_or((0, 0));
+        entries.push(SourceEntry {
+            label: format!("{}  -  {title}  -  {w}x{h}", tr("Window")),
+            chosen: Chosen::Window(Rect {
+                x: window.rect().map(|r| r.left).unwrap_or(0),
+                y: window.rect().map(|r| r.top).unwrap_or(0),
+                w,
+                h,
+            }),
+            monitor: false,
+            window: Some(window),
+        });
+    }
+    entries
+}
+
+pub fn choose_source_index(index: usize) -> Option<Chosen> {
+    let entries = list_sources();
+    let entry = entries.get(index)?;
+    if let Some(window) = entry.window {
+        *STAGED.lock().unwrap_or_else(|error| error.into_inner()) = Some(window);
+    }
+    Some(entry.chosen)
 }
 
 fn window_usable(window: Window) -> bool {
@@ -1478,96 +1539,7 @@ fn source_row(iconic: bool, cloaked: bool, width: i32, height: i32, title: &str)
         return false;
     }
     let title = title.trim();
-    !title.is_empty() && title != "ezcap" && !title.starts_with("ezcap ")
-}
-
-pub fn choose_source(owner: HWND) -> Option<Chosen> {
-    let monitors = monitor_list();
-    let windows = Window::enumerate().unwrap_or_default();
-    let windows: Vec<Window> = windows.into_iter().filter(listed_window).collect();
-    if monitors.is_empty() && windows.is_empty() {
-        return None;
-    }
-    // SAFETY: The popup menu is destroyed before return. Item text buffers live until TrackPopupMenu returns.
-    let menu = unsafe { CreatePopupMenu() }.ok()?;
-    for (index, monitor) in monitors.iter().enumerate() {
-        let label = wide(&format!(
-            "Monitor {}  {}×{}",
-            index + 1,
-            monitor.w,
-            monitor.h
-        ));
-        unsafe {
-            // SAFETY: The menu was just created and the label is NUL-terminated.
-            AppendMenuW(menu, MF_STRING, index as usize + 1, PCWSTR(label.as_ptr()))
-        }
-        .ok()?;
-    }
-    if !monitors.is_empty() && !windows.is_empty() {
-        unsafe {
-            // SAFETY: The menu was just created.
-            AppendMenuW(menu, MF_SEPARATOR, 0, None)
-        }
-        .ok()?;
-    }
-    let mut labels = Vec::new();
-    for window in &windows {
-        let title = window.title().unwrap_or_else(|_| "Window".into());
-        let (w, h) = window
-            .rect()
-            .map(|rect| {
-                (
-                    (rect.right - rect.left).max(0) as u32,
-                    (rect.bottom - rect.top).max(0) as u32,
-                )
-            })
-            .unwrap_or((0, 0));
-        labels.push(wide(&format!("Window  {title}  {w}×{h}")));
-    }
-    for (index, label) in labels.iter().enumerate() {
-        unsafe {
-            // SAFETY: The menu was just created and the label is NUL-terminated.
-            AppendMenuW(menu, MF_STRING, 1000 + index, PCWSTR(label.as_ptr()))
-        }
-        .ok()?;
-    }
-    let mut point = POINT::default();
-    unsafe {
-        // SAFETY: The POINT is a writable local.
-        GetCursorPos(&mut point)
-    }
-    .ok()?;
-    let id = unsafe {
-        // SAFETY: The owner is the main window. TPM_RETURNCMD gives the chosen item id and does not send a command.
-        TrackPopupMenu(
-            menu,
-            TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-            point.x,
-            point.y,
-            0,
-            owner,
-            None,
-        )
-    };
-    unsafe {
-        // SAFETY: The menu was created above and is not shown anymore.
-        DestroyMenu(menu)
-    }
-    .ok()?;
-    let id = id.0 as usize;
-    if (1..=monitors.len()).contains(&id) {
-        return Some(Chosen::Monitor(monitors[id - 1]));
-    }
-    let index = id.checked_sub(1000)?;
-    let window = windows.get(index).copied()?;
-    let rect = window.rect().ok()?;
-    *STAGED.lock().unwrap_or_else(|error| error.into_inner()) = Some(window);
-    Some(Chosen::Window(Rect {
-        x: rect.left,
-        y: rect.top,
-        w: (rect.right - rect.left).max(0) as u32,
-        h: (rect.bottom - rect.top).max(0) as u32,
-    }))
+    !title.is_empty() && title != "Capture Button" && !title.starts_with("Capture Button ")
 }
 
 pub fn grab_staged_window() -> Result<Frame, String> {

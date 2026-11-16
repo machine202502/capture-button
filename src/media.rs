@@ -226,7 +226,8 @@ fn grab_screen(rect: Rect, draw_cursor: bool) -> Result<Frame, String> {
     }
 }
 
-pub fn output_path(kind: &str, extension: &str) -> Result<PathBuf, String> {
+/// The folder where screenshots and recordings are written.
+pub fn output_dir() -> Result<PathBuf, String> {
     // SAFETY: The folder path from the shell is freed with CoTaskMemFree before this function returns. Only the characters up to the NUL are read.
     unsafe {
         let raw = SHGetKnownFolderPath(&FOLDERID_Pictures, KNOWN_FOLDER_FLAG(0), None)
@@ -237,9 +238,19 @@ pub fn output_path(kind: &str, extension: &str) -> Result<PathBuf, String> {
         }
         let root = String::from_utf16_lossy(std::slice::from_raw_parts(raw.0, len));
         CoTaskMemFree(Some(raw.0.cast()));
-        let dir = PathBuf::from(root).join("ezcap");
+        let dir = PathBuf::from(root).join("CaptureButton");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let time = windows::Win32::System::SystemInformation::GetLocalTime();
+        Ok(dir)
+    }
+}
+
+pub fn output_path(kind: &str, extension: &str) -> Result<PathBuf, String> {
+    let dir = output_dir()?;
+    let time = unsafe {
+        // SAFETY: GetLocalTime fills a plain SYSTEMTIME value.
+        windows::Win32::System::SystemInformation::GetLocalTime()
+    };
+    {
         for counter in 1..10000 {
             let suffix = if counter == 1 {
                 String::new()
@@ -433,10 +444,33 @@ fn copy_bgra(data: &Frame, destination: &mut frame::Video) -> Result<(), String>
     Ok(())
 }
 
+/// Closes the clipboard on every exit path, including an early `?`.
+struct Clipboard;
+
+impl Clipboard {
+    fn open() -> Result<Self, String> {
+        unsafe {
+            // SAFETY: The clipboard is opened on this thread and closed by Drop.
+            OpenClipboard(None).map_err(|error| error.to_string())?;
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for Clipboard {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: This guard exists only after OpenClipboard succeeded.
+            CloseClipboard().ok();
+        }
+    }
+}
+
 pub fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
-    // SAFETY: The clipboard is opened and closed on this thread. The allocated block matches the UTF-16 text and is given to the clipboard.
+    // SAFETY: The guard owns the clipboard. The allocated block matches the
+    // UTF-16 text and is handed to the clipboard; on failure it is freed here.
     unsafe {
-        OpenClipboard(None).map_err(|e| e.to_string())?;
+        let _clipboard = Clipboard::open()?;
         EmptyClipboard().map_err(|e| e.to_string())?;
         let wide = text
             .encode_utf16()
@@ -445,10 +479,16 @@ pub fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
         let bytes = wide.len() * 2;
         let memory = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(|e| e.to_string())?;
         let pointer = GlobalLock(memory) as *mut u16;
+        if pointer.is_null() {
+            GlobalFree(memory);
+            return Err("Cannot lock the clipboard memory".into());
+        }
         std::ptr::copy_nonoverlapping(wide.as_ptr(), pointer, wide.len());
         GlobalUnlock(memory).ok();
-        SetClipboardData(13, HANDLE(memory.0)).map_err(|e| e.to_string())?;
-        CloseClipboard().ok();
+        if let Err(error) = SetClipboardData(13, HANDLE(memory.0)) {
+            GlobalFree(memory);
+            return Err(error.to_string());
+        }
         Ok(())
     }
 }
@@ -537,9 +577,10 @@ fn write_file_drop(pointer: *mut u8, bytes: usize, path: &[u16]) {
 }
 
 pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
-    // SAFETY: The clipboard is opened and closed on this thread. The drop list is sized to the path and given to the clipboard.
+    // SAFETY: The guard owns the clipboard. The drop list is sized to the path
+    // and handed to the clipboard; on failure its block is freed here.
     unsafe {
-        OpenClipboard(None).map_err(|e| e.to_string())?;
+        let _clipboard = Clipboard::open()?;
         EmptyClipboard().map_err(|e| e.to_string())?;
         let path = path
             .to_string_lossy()
@@ -549,10 +590,16 @@ pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
         let bytes = std::mem::size_of::<DROPFILES>() + (path.len() + 1) * 2;
         let memory = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(|e| e.to_string())?;
         let pointer = GlobalLock(memory) as *mut u8;
+        if pointer.is_null() {
+            GlobalFree(memory);
+            return Err("Cannot lock the clipboard memory".into());
+        }
         write_file_drop(pointer, bytes, &path);
         GlobalUnlock(memory).ok();
-        SetClipboardData(CF_HDROP.0 as u32, HANDLE(memory.0)).map_err(|e| e.to_string())?;
-        CloseClipboard().ok();
+        if let Err(error) = SetClipboardData(CF_HDROP.0 as u32, HANDLE(memory.0)) {
+            GlobalFree(memory);
+            return Err(error.to_string());
+        }
         Ok(())
     }
 }
@@ -560,6 +607,7 @@ pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
 pub fn copy_image_to_clipboard(frame: &Frame) -> Result<(), String> {
     // SAFETY: The screen DC is released before return. The bitmap header size is set, and the copy uses only the frame's byte count.
     unsafe {
+        let _clipboard = Clipboard::open()?;
         let screen = GetDC(None);
         let dc = CreateCompatibleDC(screen);
         let mut info: BITMAPINFO = std::mem::zeroed();
@@ -570,18 +618,42 @@ pub fn copy_image_to_clipboard(frame: &Frame) -> Result<(), String> {
         info.bmiHeader.biBitCount = 32;
         info.bmiHeader.biCompression = BI_RGB.0;
         let mut bits = std::ptr::null_mut();
-        let bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, None, 0)
-            .map_err(|e| e.to_string())?;
-        std::ptr::copy_nonoverlapping(frame.data.as_ptr(), bits.cast::<u8>(), frame.data.len());
-        SelectObject(dc, bitmap);
-        OpenClipboard(None).map_err(|e| e.to_string())?;
-        EmptyClipboard().map_err(|e| e.to_string())?;
-        SetClipboardData(
+        let bitmap = match CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, None, 0) {
+            Ok(bitmap) if !bits.is_null() => bitmap,
+            _ => {
+                DeleteDC(dc);
+                ReleaseDC(None, screen);
+                return Err("Cannot allocate the clipboard image".into());
+            }
+        };
+        let bytes = frame.width as usize * frame.height as usize * 4;
+        if frame.data.len() < bytes {
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+            ReleaseDC(None, screen);
+            return Err("Frame size does not match the image".into());
+        }
+        std::ptr::copy_nonoverlapping(frame.data.as_ptr(), bits.cast::<u8>(), bytes);
+        let old = SelectObject(dc, bitmap);
+        if let Err(error) = EmptyClipboard() {
+            SelectObject(dc, old);
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+            ReleaseDC(None, screen);
+            return Err(error.to_string());
+        }
+        if let Err(error) = SetClipboardData(
             windows::Win32::System::Ole::CF_BITMAP.0 as u32,
             HANDLE(bitmap.0),
-        )
-        .map_err(|e| e.to_string())?;
-        CloseClipboard().ok();
+        ) {
+            SelectObject(dc, old);
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+            ReleaseDC(None, screen);
+            return Err(error.to_string());
+        }
+        // The clipboard now owns the bitmap.
+        SelectObject(dc, old);
         DeleteDC(dc);
         ReleaseDC(None, screen);
         Ok(())
@@ -680,10 +752,6 @@ pub fn microphones() -> Vec<AudioDevice> {
         Some(result)
     })()
     .unwrap_or_default()
-}
-
-pub fn device_at(index: usize) -> Option<AudioDevice> {
-    microphones().get(index).cloned()
 }
 
 pub fn device_name(id: &str) -> Option<String> {
@@ -1556,7 +1624,8 @@ mod tests {
     use super::*;
 
     fn directory(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("ezcap-{name}-{}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("CaptureButton-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         path
@@ -1655,10 +1724,7 @@ mod tests {
             .push_audio_at(0, &vec![0.1f32; samples_per_frame as usize * 5 * 2])
             .unwrap();
         writer
-            .push_audio_at(
-                samples_per_frame * 5,
-                &vec![0.1f32; 48_000usize * 2 * 2],
-            )
+            .push_audio_at(samples_per_frame * 5, &vec![0.1f32; 48_000usize * 2 * 2])
             .unwrap();
         writer.push_at(&frame, 5 + 60).unwrap();
         writer.finish().unwrap();
@@ -1998,7 +2064,7 @@ mod tests {
     #[test]
     fn a_copied_file_list_ends_with_a_real_utf16_nul() {
         use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
-        let name = r"C:\Pictures\ezcap\Shot.png";
+        let name = r"C:\Pictures\CaptureButton\Shot.png";
         let path = name
             .encode_utf16()
             .chain(std::iter::once(0))

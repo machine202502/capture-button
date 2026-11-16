@@ -1,4 +1,4 @@
-ezcap includes third-party components.
+Capture Button includes third-party components.
 
 FFmpeg (https://ffmpeg.org) and x264 (https://www.videolan.org/developers/x264.html) are licensed under the GNU General Public License, version 2 or later. The text is in COPYING. Their license page is https://ffmpeg.org/legal.html.
 
@@ -30,5 +30,5 @@ SOFTWARE.
 
 The executable also contains Rust crates. Their names, versions, authors, and license texts are in THIRD-PARTY.txt. Those crates are under MIT, Apache-2.0, BSD, zlib, or the Do What The Fuck You Want To Public License (the ffmpeg-next bindings).
 
-Source code for ezcap: https://github.com/machine202502/ezcap
+Source code for Capture Button: https://github.com/machine202502/capture-button
 The same file, assets/Phosphor.LICENSE, is the MIT text for the font in this source tree.

@@ -54,7 +54,7 @@ fn wide_cache() -> &'static Mutex<HashMap<String, Box<[u16]>>> {
 
 /// Translate one English source string.
 pub fn tr(key: &str) -> String {
-    let guard = active().read().unwrap();
+    let guard = active().read().unwrap_or_else(|error| error.into_inner());
     match guard.strings.get(key) {
         Some(text) => text.clone(),
         None => key.to_string(),
@@ -74,7 +74,9 @@ pub fn trf(key: &str, args: &[(&str, &str)]) -> String {
 /// pointer stays valid while the process lives.
 pub fn pcw(key: &str) -> PCWSTR {
     let text = tr(key);
-    let mut cache = wide_cache().lock().unwrap();
+    let mut cache = wide_cache()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let buffer = cache.entry(text).or_insert_with_key(|value| {
         value
             .encode_utf16()
@@ -86,7 +88,7 @@ pub fn pcw(key: &str) -> PCWSTR {
 }
 
 /// Folders searched for catalogs: the app's own `locales/` next to the
-/// executable, then a user-editable copy in `%LOCALAPPDATA%\ezcap\locales`.
+/// executable, then a user-editable copy in `%LOCALAPPDATA%\CaptureButton\locales`.
 pub fn search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -95,7 +97,7 @@ pub fn search_dirs() -> Vec<PathBuf> {
         }
     }
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        dirs.push(PathBuf::from(local).join("ezcap").join("locales"));
+        dirs.push(PathBuf::from(local).join("CaptureButton").join("locales"));
     }
     dirs
 }
@@ -185,14 +187,16 @@ pub fn init(preferred: &str) -> String {
         .cloned()
         .unwrap_or_else(Catalog::english);
     let code = chosen.code.clone();
-    *active().write().unwrap() = chosen;
-    *catalogs().write().unwrap() = found;
+    *active().write().unwrap_or_else(|error| error.into_inner()) = chosen;
+    *catalogs()
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = found;
     code
 }
 
 /// Catalogs available for the picker, English always included.
 pub fn available() -> Vec<(String, String)> {
-    let guard = catalogs().read().unwrap();
+    let guard = catalogs().read().unwrap_or_else(|error| error.into_inner());
     let mut list: Vec<(String, String)> = guard
         .iter()
         .map(|catalog| (catalog.code.clone(), catalog.name.clone()))
@@ -230,7 +234,7 @@ mod tests {
 
     #[test]
     fn missing_translations_fall_back_to_the_english_key() {
-        *active().write().unwrap() = Catalog::english();
+        *active().write().unwrap_or_else(|error| error.into_inner()) = Catalog::english();
         assert_eq!(tr("Settings"), "Settings");
         assert_eq!(trf("Saved: {path}", &[("path", "a.png")]), "Saved: a.png");
     }

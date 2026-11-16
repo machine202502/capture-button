@@ -23,8 +23,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "package.ps1 failed"
 }
 
-$portable = Join-Path $Root "dist\ezcap-$Version-windows-x64.zip"
-$setup = Join-Path $Root "dist\ezcap-$Version-windows-x64-setup.exe"
+$portable = Join-Path $Root "dist\CaptureButton-$Version-windows-x64.zip"
+$setup = Join-Path $Root "dist\CaptureButton-$Version-windows-x64-setup.exe"
 foreach ($path in @($portable, $setup)) {
     if (-not (Test-Path $path)) {
         throw "Missing release file: $path"
@@ -34,16 +34,16 @@ foreach ($path in @($portable, $setup)) {
 $notes = @"
 Windows x64.
 
-- ``ezcap-$Version-windows-x64.zip`` is portable. Unzip it and run ``ezcap.exe``.
-- ``ezcap-$Version-windows-x64-setup.exe`` installs ezcap for all users.
+- ``CaptureButton-$Version-windows-x64.zip`` is portable. Unzip it and run ``CaptureButton.exe``.
+- ``CaptureButton-$Version-windows-x64-setup.exe`` installs Capture Button for all users.
 
 The executable includes FFmpeg and x264 under the GNU GPL v2 or later, Phosphor Icons under the MIT License, and the other libraries and Rust crates named in the notices. ``COPYING``, ``NOTICE``, and ``THIRD-PARTY.txt`` in the zip and the install folder carry those terms and where to get the source.
-ezcap source for this tag: https://github.com/machine202502/ezcap/tree/$Tag
+Capture Button source for this tag: https://github.com/machine202502/capture-button/tree/$Tag
 "@
 
 $ghArgs = @(
     "release", "create", $Tag,
-    "--title", "ezcap $Version",
+    "--title", "Capture Button $Version",
     "--notes", $notes,
     $portable,
     $setup

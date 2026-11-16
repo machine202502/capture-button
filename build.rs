@@ -35,20 +35,21 @@ fn copy_locales() {
 }
 
 fn main() {
+    slint_build::compile("ui/main.slint").unwrap();
     println!("cargo:rerun-if-env-changed=FFMPEG_DIR");
-    println!("cargo:rerun-if-changed=assets/ezcap.ico");
+    println!("cargo:rerun-if-changed=assets/CaptureButton.ico");
     println!("cargo:rerun-if-changed=assets/app.manifest");
     copy_locales();
     let mut resource = winres::WindowsResource::new();
-    resource.set_icon("assets/ezcap.ico");
+    resource.set_icon("assets/CaptureButton.ico");
     resource.set_manifest_file("assets/app.manifest");
-    resource.set("ProductName", "ezcap");
+    resource.set("ProductName", "Capture Button");
     resource.set("FileDescription", "Screen, region and audio capture");
     resource.set(
         "Comments",
-        "https://github.com/machine202502/ezcap — includes FFmpeg and x264 under the GNU GPL v2 or later (https://ffmpeg.org/legal.html) and Phosphor Icons under the MIT License (https://phosphoricons.com). Other notices are in THIRD-PARTY.txt.",
+        "https://github.com/machine202502/capture-button — includes FFmpeg and x264 under the GNU GPL v2 or later (https://ffmpeg.org/legal.html) and Phosphor Icons under the MIT License (https://phosphoricons.com). Other notices are in THIRD-PARTY.txt.",
     );
-    resource.set("OriginalFilename", "ezcap.exe");
+    resource.set("OriginalFilename", "CaptureButton.exe");
     resource.compile().unwrap();
     let Some(dir) = std::env::var_os("FFMPEG_DIR").map(PathBuf::from) else {
         return;

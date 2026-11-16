@@ -12,7 +12,7 @@ use windows::Win32::UI::Controls::Dialogs::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const CLASS: PCWSTR = w!("ezcap.region");
+const CLASS: PCWSTR = w!("CaptureButton.region");
 static mut REGION: *mut Region = std::ptr::null_mut();
 static mut EDIT_PROC: isize = 0;
 
@@ -354,6 +354,11 @@ impl Region {
     }
 
     fn finish(&mut self, outcome: Outcome) {
+        if self.outcome.is_some() {
+            // A second click, Alt+F4 or an auto-repeated key must not post a
+            // second notification after the overlay has been destroyed.
+            return;
+        }
         self.commit_text();
         self.outcome = Some(outcome);
         unsafe {
@@ -395,6 +400,9 @@ impl Region {
     }
 
     fn save(&mut self, choose_path: bool) {
+        if self.outcome.is_some() {
+            return;
+        }
         self.commit_text();
         let Some(frame) = self.crop() else { return };
         let path = if choose_path {
@@ -1713,7 +1721,7 @@ fn message(text: &str) {
         MessageBoxW(
             region().hwnd,
             PCWSTR(crate::wide(text).as_ptr()),
-            w!("ezcap"),
+            w!("Capture Button"),
             MB_OK | MB_ICONERROR,
         );
     }
@@ -2431,7 +2439,7 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
         );
         let old_brush = SelectObject(dc, brush);
         let old_pen = SelectObject(dc, pen);
-        let radius = (button.h / 4).max(6);
+        let radius = button.h;
         RoundRect(
             dc,
             button.x,
@@ -2444,24 +2452,27 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
         if button.role == Role::Color {
             let dot = CreateSolidBrush(region.color);
             let ring = CreatePen(PS_SOLID, 2, theme::WHITE);
-            SelectObject(dc, dot);
-            SelectObject(dc, ring);
+            let old_dot = SelectObject(dc, dot);
+            let old_ring = SelectObject(dc, ring);
             let cx = button.x + button.w / 2;
             let cy = button.y + button.h / 2;
             Ellipse(dc, cx - 8, cy - 8, cx + 8, cy + 8);
+            SelectObject(dc, old_dot);
+            SelectObject(dc, old_ring);
             DeleteObject(dot);
             DeleteObject(ring);
         } else if button.role == Role::Width {
             let stroke = CreatePen(PS_SOLID, region.width.max(1), ink);
-            SelectObject(dc, stroke);
+            let old_stroke = SelectObject(dc, stroke);
             MoveToEx(dc, button.x + 8, button.y + button.h / 2, None).ok();
             LineTo(dc, button.x + button.w - 8, button.y + button.h / 2).ok();
+            SelectObject(dc, old_stroke);
             DeleteObject(stroke);
         } else if let Some(swatch) = button.swatch {
             if theme::SWATCHES[swatch] == region.color {
                 let ring = CreatePen(PS_SOLID, 2, theme::WHITE);
-                SelectObject(dc, ring);
-                SelectObject(dc, GetStockObject(NULL_BRUSH));
+                let old_ring = SelectObject(dc, ring);
+                let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
                 RoundRect(
                     dc,
                     button.x + 3,
@@ -2471,6 +2482,8 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
                     8,
                     8,
                 );
+                SelectObject(dc, old_brush);
+                SelectObject(dc, old_ring);
                 DeleteObject(ring);
             }
         } else if let Some(glyph) = icon(button.role) {
@@ -2529,10 +2542,16 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
     }
 }
 
-fn draw_annotations(frame: &mut Frame, shapes: &[Shape], offset: Point) {
+fn draw_annotations(frame: &mut Frame, shapes: &[Shape], offset: Point) -> bool {
     unsafe {
         // SAFETY: Every field the API reads, including the size, is written before the struct is used.
-
+        if frame.width == 0 || frame.height == 0 {
+            return false;
+        }
+        let bytes = frame.width as usize * frame.height as usize * 4;
+        if frame.data.len() < bytes {
+            return false;
+        }
         let screen = GetDC(None);
         let dc = CreateCompatibleDC(screen);
         let mut info: BITMAPINFO = std::mem::zeroed();
@@ -2543,14 +2562,22 @@ fn draw_annotations(frame: &mut Frame, shapes: &[Shape], offset: Point) {
         info.bmiHeader.biBitCount = 32;
         info.bmiHeader.biCompression = BI_RGB.0;
         let mut bits = std::ptr::null_mut();
-        let bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+        let bitmap = match CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, None, 0) {
+            Ok(bitmap) if !bits.is_null() => bitmap,
+            _ => {
+                // A very large selection or a GDI crunch must not abort the app.
+                DeleteDC(dc);
+                ReleaseDC(None, screen);
+                return false;
+            }
+        };
         let old = SelectObject(dc, bitmap);
-        std::ptr::copy_nonoverlapping(frame.data.as_ptr(), bits.cast::<u8>(), frame.data.len());
+        std::ptr::copy_nonoverlapping(frame.data.as_ptr(), bits.cast::<u8>(), bytes);
         for shape in shapes {
             draw_shape(dc, shape, offset);
         }
         GdiFlush();
-        std::ptr::copy_nonoverlapping(bits.cast::<u8>(), frame.data.as_mut_ptr(), frame.data.len());
+        std::ptr::copy_nonoverlapping(bits.cast::<u8>(), frame.data.as_mut_ptr(), bytes);
         // GDI writes the stroke color and clears the alpha byte, so a red line becomes a transparent hole in PNG.
         for pixel in frame.data.as_chunks_mut::<4>().0 {
             pixel[3] = 255;
@@ -2559,6 +2586,7 @@ fn draw_annotations(frame: &mut Frame, shapes: &[Shape], offset: Point) {
         DeleteObject(bitmap);
         DeleteDC(dc);
         ReleaseDC(None, screen);
+        true
     }
 }
 
@@ -2700,7 +2728,7 @@ pub fn open(overlay: Overlay, allow_record: bool) -> Result<(), String> {
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             CLASS,
-            w!("ezcap area"),
+            w!("Capture Button area"),
             WS_POPUP,
             monitor.x,
             monitor.y,
@@ -2712,7 +2740,11 @@ pub fn open(overlay: Overlay, allow_record: bool) -> Result<(), String> {
             None,
         )
         .map_err(|error| error.to_string())?;
-        REGION = Box::into_raw(Region::new(hwnd, overlay, allow_record)?);
+        REGION = Box::into_raw(Region::new(hwnd, overlay, allow_record).inspect_err(|_| {
+            // The window is not tracked yet; destroy it instead of
+            // leaking a topmost layered window on every failed retry.
+            DestroyWindow(hwnd).ok();
+        })?);
         region().show();
         Ok(())
     }
@@ -2735,7 +2767,7 @@ pub fn open_with_frame(frame: Frame, scale: u32) -> Result<(), String> {
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             CLASS,
-            w!("ezcap area"),
+            w!("Capture Button area"),
             WS_POPUP,
             0,
             0,
@@ -2967,6 +2999,14 @@ fn action_roles(overlay: Overlay) -> Vec<Role> {
 }
 
 pub fn take_outcome() -> Option<Outcome> {
+    // The overlay can already be gone when a second posted notification
+    // arrives. Dereferencing REGION here used to kill the whole process.
+    unsafe {
+        // SAFETY: This only checks the pointer; it is dereferenced below only when non-null.
+        if REGION.is_null() {
+            return None;
+        }
+    }
     let outcome = region().outcome.take();
     if outcome.is_some() {
         shutdown();
@@ -3019,7 +3059,7 @@ mod tests {
             // SAFETY: The class name lives for the process. The new HWND is stored and destroyed with its owner.
 
             let instance = GetModuleHandleW(None).unwrap();
-            let class = w!("ezcap.edit.probe");
+            let class = w!("CaptureButton.edit.probe");
             let window = WNDCLASSW {
                 lpfnWndProc: Some(probe_proc),
                 hInstance: instance.into(),

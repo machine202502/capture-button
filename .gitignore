@@ -2,6 +2,7 @@
 /dist/
 /vcpkg_installed/
 /.tools/
+/design/
 *.pdb
 *.user
 *.suo

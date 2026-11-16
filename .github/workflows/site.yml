@@ -1,4 +1,4 @@
-name: Site
+﻿name: Site
 
 on:
   push:
@@ -43,8 +43,8 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Release $tag"
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
-          mkdir -p /tmp/ezcap-release
-          cd /tmp/ezcap-release
+          mkdir -p /tmp/capture-button-release
+          cd /tmp/capture-button-release
           asset() {
             gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
               --jq "[.assets[] | select(.name | endswith(\"$1\"))][0].$2 // \"\""

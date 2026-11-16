@@ -5,6 +5,7 @@
 mod capture;
 mod geom;
 mod i18n;
+mod logging;
 mod media;
 mod outline;
 mod region;
@@ -27,24 +28,21 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::*;
 use windows::Win32::UI::Controls::{
-    TaskDialogIndirect, DRAWITEMSTRUCT, MEASUREITEMSTRUCT, NMCUSTOMDRAW, NMHDR, NM_CUSTOMDRAW,
-    ODS_DISABLED, ODS_GRAYED, ODS_SELECTED, ODT_MENU, TASKDIALOGCONFIG, TASKDIALOG_NOTIFICATIONS,
-    TB_THUMBTRACK, TDCBF_OK_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS,
-    TDF_POSITION_RELATIVE_TO_WINDOW, TDF_SIZE_TO_CONTENT, TDN_HYPERLINK_CLICKED,
+    DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_GRAYED, ODS_SELECTED, ODT_MENU,
 };
-#[cfg(test)]
-use windows::Win32::UI::Controls::{TDF_CALLBACK_TIMER, TDN_TIMER};
 use windows::Win32::UI::HiDpi::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const CLASS: PCWSTR = w!("ezcap.window");
-const TITLE: PCWSTR = w!("ezcap");
+const CLASS: PCWSTR = w!("CaptureButton.window");
+const TITLE: PCWSTR = w!("Capture Button");
+const REPOSITORY: &str = "https://github.com/machine202502/capture-button";
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_REGION: u32 = WM_APP + 2;
 const WM_ACTIVATE_APP: u32 = WM_APP + 3;
 const TIMER_ID: usize = 1;
+const TRAY_RETRY_TIMER: usize = 3;
+const TRAY_RETRY_LIMIT: u32 = 30;
 const ID_TRAY_AREA: i32 = 200;
 const ID_TRAY_SHOT: i32 = 201;
 const ID_TRAY_VIDEO: i32 = 202;
@@ -55,75 +53,14 @@ const ID_TRAY_OPEN: i32 = 206;
 const ID_TRAY_RESET_SCALE: i32 = 207;
 
 static mut APP: *mut App = std::ptr::null_mut();
-
-const REPOSITORY: &str = "https://github.com/machine202502/ezcap";
+/// The shell's broadcast message; Explorer restarts drop every tray icon until
+/// the owner answers this by adding it again.
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
 /// The executable's icon resource. Windows identifies it by the integer 1, not by a string.
 #[allow(clippy::manual_dangling_ptr)]
 pub(crate) fn module_icon() -> PCWSTR {
     PCWSTR(1 as *const u16)
-}
-
-#[cfg(test)]
-static CAPTURE_ABOUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static ABOUT_SHOT: std::sync::Mutex<Option<media::Frame>> = std::sync::Mutex::new(None);
-
-fn show_about(owner: HWND) {
-    let title = wide("ezcap");
-    let instruction = wide("ezcap");
-    let content = wide(&trf(
-        "Version {version}\n\nScreen, region and audio capture.\n\nIncludes FFmpeg and x264 under the <a href=\"https://www.gnu.org/licenses/old-licenses/gpl-2.0.html\">GNU GPL v2 or later</a>.\n<a href=\"https://ffmpeg.org/legal.html\">FFmpeg</a>\n<a href=\"https://www.videolan.org/developers/x264.html\">x264</a>\n\nIcons from <a href=\"https://phosphoricons.com\">Phosphor Icons</a>, <a href=\"https://github.com/phosphor-icons/homepage/blob/master/LICENSE\">MIT</a>.\n\nOther library and crate notices are in NOTICE and THIRD-PARTY.txt next to this program.\n\n<a href=\"{repository}\">ezcap source</a>",
-        &[
-            ("version", env!("CARGO_PKG_VERSION")),
-            ("repository", REPOSITORY),
-        ],
-    ));
-    let mut config = TASKDIALOGCONFIG {
-        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
-        hwndParent: owner,
-        ..Default::default()
-    };
-    #[cfg(test)]
-    let flags = {
-        let mut flags = TDF_ENABLE_HYPERLINKS
-            | TDF_ALLOW_DIALOG_CANCELLATION
-            | TDF_POSITION_RELATIVE_TO_WINDOW
-            | TDF_SIZE_TO_CONTENT;
-        if CAPTURE_ABOUT.load(std::sync::atomic::Ordering::SeqCst) {
-            flags |= TDF_CALLBACK_TIMER;
-        }
-        flags
-    };
-    #[cfg(not(test))]
-    let flags = TDF_ENABLE_HYPERLINKS
-        | TDF_ALLOW_DIALOG_CANCELLATION
-        | TDF_POSITION_RELATIVE_TO_WINDOW
-        | TDF_SIZE_TO_CONTENT;
-    config.dwFlags = flags;
-    config.dwCommonButtons = TDCBF_OK_BUTTON;
-    config.pszWindowTitle = PCWSTR(title.as_ptr());
-    config.pszMainInstruction = PCWSTR(instruction.as_ptr());
-    config.pszContent = PCWSTR(content.as_ptr());
-    config.pfCallback = Some(about_link);
-    unsafe {
-        // SAFETY: The dialog strings and callback outlive this call, and cbSize matches the struct.
-
-        TaskDialogIndirect(&config, None, None, None).ok();
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn capture_about_dialog(owner: HWND) -> media::Frame {
-    ABOUT_SHOT.lock().unwrap().take();
-    CAPTURE_ABOUT.store(true, std::sync::atomic::Ordering::SeqCst);
-    show_about(owner);
-    CAPTURE_ABOUT.store(false, std::sync::atomic::Ordering::SeqCst);
-    ABOUT_SHOT
-        .lock()
-        .unwrap()
-        .take()
-        .expect("the about dialog was not captured")
 }
 
 #[cfg(test)]
@@ -179,39 +116,6 @@ fn print_window_frame(hwnd: HWND) -> media::Frame {
     }
 }
 
-// SAFETY: The task dialog calls this for its own notifications. A hyperlink argument is a NUL-terminated string the dialog keeps alive for the callback.
-unsafe extern "system" fn about_link(
-    hwnd: HWND,
-    msg: TASKDIALOG_NOTIFICATIONS,
-    _wparam: WPARAM,
-    lparam: LPARAM,
-    _: isize,
-) -> windows::core::HRESULT {
-    #[cfg(test)]
-    if msg == TDN_TIMER
-        && _wparam.0 >= 200
-        && CAPTURE_ABOUT.load(std::sync::atomic::Ordering::SeqCst)
-    {
-        let mut shot = ABOUT_SHOT.lock().unwrap();
-        if shot.is_none() {
-            *shot = Some(print_window_frame(hwnd));
-            drop(shot);
-            PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)).ok();
-        }
-    }
-    if msg == TDN_HYPERLINK_CLICKED {
-        ShellExecuteW(
-            hwnd,
-            w!("open"),
-            PCWSTR(lparam.0 as *const u16),
-            None,
-            None,
-            SW_SHOWNORMAL,
-        );
-    }
-    windows::core::HRESULT(0)
-}
-
 pub(crate) fn history_stamp(
     day: u16,
     month: u16,
@@ -257,7 +161,14 @@ fn accepts_command(mode: Mode, id: i32, region_open: bool) -> bool {
                 | ID_TRAY_RESET_SCALE
                 | ID_STATUS
                 | ID_ABOUT
+                | ui::ID_ABOUT_CLOSE
+                | ui::ID_ABOUT_RECORDINGS
+                | ui::ID_ABOUT_LOGS
+                | ui::ID_ABOUT_GITHUB
+                | ui::ID_COPY_OUTPUT
+                | ui::ID_SOURCE_CLOSE
         )
+        || (ui::SOURCE_ROW_BASE..500).contains(&id)
         || ui::history_click(id).is_some()
 }
 
@@ -377,7 +288,7 @@ fn recording_tip(kind: RecordingKind, seconds: u64) -> String {
         RecordingKind::Audio => tr("audio"),
     };
     trf(
-        "ezcap — recording {kind} {time}",
+        "Capture Button — recording {kind} {time}",
         &[
             ("kind", &name),
             ("time", &format!("{:02}:{:02}", seconds / 60, seconds % 60)),
@@ -464,13 +375,6 @@ fn high(value: usize) -> u16 {
     ((value >> 16) & 0xffff) as u16
 }
 
-fn point_of(lparam: LPARAM) -> (i32, i32) {
-    (
-        (lparam.0 & 0xFFFF) as u16 as i16 as i32,
-        ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32,
-    )
-}
-
 fn command_id(wparam: usize) -> i32 {
     low(wparam) as i32
 }
@@ -495,8 +399,10 @@ struct App {
     tray_menu: HMENU,
     base_icon: HICON,
     status_icon: HICON,
+    tray_added: bool,
+    tray_retry: u32,
     icon_mode: Option<Mode>,
-    background: HBRUSH,
+    surface: HBRUSH,
     restore_visible: bool,
     hide_region: bool,
     pending_window: bool,
@@ -508,6 +414,7 @@ struct App {
     region_outline: bool,
     region_source: ProfileRef,
     recording_kind: RecordingKind,
+    source_screenshot: bool,
     saved_path: Option<PathBuf>,
     history: Vec<(PathBuf, String)>,
     menu_icons: Vec<HBITMAP>,
@@ -518,7 +425,7 @@ impl App {
         let settings = Settings::load();
         Self {
             hwnd,
-            controls: Controls::new(hwnd),
+            controls: Controls::new(),
             settings,
             mode: Mode::Idle,
             session: None,
@@ -532,10 +439,12 @@ impl App {
             tray_menu: HMENU::default(),
             base_icon: HICON::default(),
             status_icon: HICON::default(),
+            tray_added: false,
+            tray_retry: 0,
             icon_mode: None,
-            background: unsafe {
-                // SAFETY: The color is a plain COLORREF. The brush is stored for the process or deleted in this block.
-                CreateSolidBrush(BACKGROUND)
+            surface: unsafe {
+                // SAFETY: The color is a plain COLORREF, stored for the process lifetime.
+                CreateSolidBrush(theme::SURFACE)
             },
             restore_visible: false,
             hide_region: true,
@@ -548,6 +457,7 @@ impl App {
             region_outline: false,
             region_source: ProfileRef::Capture,
             recording_kind: RecordingKind::Video,
+            source_screenshot: false,
             saved_path: None,
             history: Vec::new(),
             menu_icons: Vec::new(),
@@ -555,6 +465,7 @@ impl App {
     }
 
     fn build(&mut self) {
+        ui::attach(self.hwnd);
         self.controls.build(&mut self.settings);
         self.history = settings::load_history(ui::HISTORY_COUNT as usize);
         self.refresh_history();
@@ -661,21 +572,101 @@ impl App {
             .unwrap_or_default(),
             ..Default::default()
         };
-        nid.szTip[..wide("ezcap").len()].copy_from_slice(&wide("ezcap"));
-        unsafe {
-            // SAFETY: The struct describes the tray icon owned by this window, and its size field is set.
-            Shell_NotifyIconW(NIM_ADD, &nid)
-        }
-        .ok();
+        nid.szTip[..wide("Capture Button").len()].copy_from_slice(&wide("Capture Button"));
         self.base_icon = nid.hIcon;
         self.status_icon = nid.hIcon;
         self.tray = nid;
+        let background = MENUINFO {
+            cbSize: std::mem::size_of::<MENUINFO>() as u32,
+            fMask: MIM_BACKGROUND | MIM_APPLYTOSUBMENUS,
+            dwStyle: MNS_NOCHECK,
+            hbrBack: self.surface,
+            ..Default::default()
+        };
+        unsafe {
+            // SAFETY: The menu and the brush both belong to this window.
+            SetMenuInfo(self.tray_menu, &background).ok();
+        }
+        if !self.add_tray_icon() {
+            self.schedule_tray_retry();
+        }
+    }
+
+    /// Adds the balloon's icon to the current shell. Explorer owns the icon, so
+    /// this must be repeatable: it is called at startup, after any failure, and
+    /// when Explorer announces it has restarted.
+    fn add_tray_icon(&mut self) -> bool {
+        self.tray.hWnd = self.hwnd;
+        self.tray.uID = 1;
+        self.tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        self.tray.uCallbackMessage = WM_TRAY;
+        self.tray.hIcon = self.status_icon;
+        let added = unsafe {
+            // SAFETY: The struct describes the tray icon owned by this window,
+            // and every field the shell reads is filled above.
+            Shell_NotifyIconW(NIM_ADD, &self.tray)
+        }
+        .as_bool();
+        if added {
+            self.tray_added = true;
+            self.tray_retry = 0;
+            unsafe {
+                // SAFETY: This timer id belongs to this window. Killing an
+                // inactive timer is harmless.
+                KillTimer(self.hwnd, TRAY_RETRY_TIMER)
+            }
+            .ok();
+            true
+        } else {
+            self.tray_added = false;
+            false
+        }
+    }
+
+    fn schedule_tray_retry(&mut self) {
+        if self.tray_added || self.tray_retry >= TRAY_RETRY_LIMIT {
+            return;
+        }
+        self.tray_retry += 1;
+        unsafe {
+            // SAFETY: The HWND is the main window, and this timer id is killed
+            // as soon as the icon is accepted.
+            SetTimer(self.hwnd, TRAY_RETRY_TIMER, 1_000, None)
+        };
+    }
+
+    fn retry_tray(&mut self) {
+        if self.tray_added {
+            unsafe {
+                // SAFETY: The HWND is the main window, and this timer belongs to it.
+                KillTimer(self.hwnd, TRAY_RETRY_TIMER)
+            }
+            .ok();
+            return;
+        }
+        // Rebuild the status icon before the add so the shell receives the icon
+        // for the mode the app is in right now.
+        self.icon_mode = None;
+        self.update_state();
+    }
+
+    fn readd_tray(&mut self) {
+        // Forget both the shell ownership and the cached status icon. The next
+        // set_tray_status creates the icon for the current mode and then adds it.
+        self.tray_added = false;
+        self.icon_mode = None;
+        self.update_state();
     }
 
     fn set_tray_status(&mut self, text: &str) {
         self.tray.szTip = [0; 128];
         let text = wide(text);
-        self.tray.szTip[..text.len()].copy_from_slice(&text);
+        // A user-editable locale can make this string longer than the fixed
+        // NOTIFYICONDATAW field. Cut it instead of panicking (release aborts),
+        // and keep the last unit as the NUL terminator.
+        let limit = self.tray.szTip.len().saturating_sub(1);
+        let length = text.len().min(limit);
+        self.tray.szTip[..length].copy_from_slice(&text[..length]);
         self.tray.uFlags = NIF_TIP | NIF_ICON;
         if self.icon_mode != Some(self.mode) {
             let icon = tray_status_icon(self.base_icon, self.mode);
@@ -690,14 +681,35 @@ impl App {
             self.icon_mode = Some(self.mode);
         }
         self.tray.hIcon = self.status_icon;
-        unsafe {
+        let mut tried_add = false;
+        if !self.tray_added && self.tray_retry < TRAY_RETRY_LIMIT {
+            tried_add = true;
+            if !self.add_tray_icon() {
+                self.schedule_tray_retry();
+            }
+        }
+        let added = unsafe {
             // SAFETY: The struct describes the tray icon owned by this window, and its size field is set.
             Shell_NotifyIconW(NIM_MODIFY, &self.tray)
         }
-        .ok();
+        .as_bool();
+        if added {
+            // NIM_MODIFY succeeding proves the shell owns this icon, even if we
+            // had marked it missing.
+            self.tray_added = true;
+            self.tray_retry = 0;
+        } else {
+            // The shell forgot this icon (usually an Explorer restart that raced
+            // the TaskbarCreated broadcast). Add it again, once.
+            self.tray_added = false;
+            if !tried_add && self.tray_retry < TRAY_RETRY_LIMIT && !self.add_tray_icon() {
+                self.schedule_tray_retry();
+            }
+        }
     }
 
     fn command(&mut self, id: i32, notification: u16) {
+        logging::info(format!("command {id} notification {notification}"));
         if id == ID_TAB || id == ID_SETTINGS_TAB {
             if matches!(self.mode, Mode::Idle | Mode::Recording) {
                 self.controls.show_page(if id == ID_TAB { 0 } else { 1 });
@@ -717,28 +729,14 @@ impl App {
                 self.controls.refresh_devices(id);
             }
             if notification == CBN_SELCHANGE as u16 {
-                self.controls.read_ui(&mut self.settings);
+                self.controls.read_ui(&mut self.settings, true);
             }
             return;
         }
         if id == ID_LANGUAGE {
-            // The notification matters here: CBN_DROPDOWN arrives right before
-            // the list opens, and a dialog would close it again.
-            if notification == CBN_SELCHANGE as u16 {
-                self.controls.read_ui(&mut self.settings);
-                // Labels are created with the window, so a new language shows
-                // up on the next start.
-                let text = wide(&tr("Language saved. Restart ezcap to apply."));
-                unsafe {
-                    // SAFETY: The strings outlive the call and the window belongs to this program.
-
-                    MessageBoxW(
-                        self.hwnd,
-                        PCWSTR(text.as_ptr()),
-                        i18n::pcw("Language"),
-                        MB_OK | MB_ICONINFORMATION,
-                    );
-                }
+            if notification == 1 {
+                self.controls.read_ui(&mut self.settings, true);
+                self.apply_language();
             }
             return;
         }
@@ -751,7 +749,28 @@ impl App {
         }
         match id {
             ID_REFRESH => self.controls.refresh_all_devices(&mut self.settings),
-            ID_ABOUT => show_about(self.hwnd),
+            ID_ABOUT => self.controls.show_about(true),
+            ui::ID_ABOUT_CLOSE => self.controls.show_about(false),
+            ui::ID_ABOUT_RECORDINGS => {
+                if let Ok(path) = media::output_dir() {
+                    let _ = std::process::Command::new("explorer.exe").arg(path).spawn();
+                }
+            }
+            ui::ID_ABOUT_LOGS => logging::open_dir(),
+            ui::ID_ABOUT_GITHUB => {
+                let url = wide(REPOSITORY);
+                unsafe {
+                    // SAFETY: The URL is NUL-terminated and the owner window belongs to this program.
+                    ShellExecuteW(
+                        self.hwnd,
+                        w!("open"),
+                        PCWSTR(url.as_ptr()),
+                        None,
+                        None,
+                        SW_SHOWNORMAL,
+                    );
+                }
+            }
             ID_PRESET if notification == CBN_SELCHANGE as u16 => {
                 self.controls.apply_preset(&mut self.settings)
             }
@@ -762,26 +781,28 @@ impl App {
                 self.controls.apply_tray_preset(&mut self.settings, false)
             }
             110..=112 => {
-                self.controls.format_index = (id - ID_FORMAT) as usize;
+                self.controls.set_format_index((id - ID_FORMAT) as usize);
                 self.settings.ui.format = Format::from_index((id - ID_FORMAT) as usize);
                 self.controls.load_main_video(&self.settings.ui);
-                self.controls.read_ui(&mut self.settings);
+                self.controls.read_ui(&mut self.settings, true);
                 self.controls.refresh_formats();
             }
             160..=162 => {
-                self.controls.tray_area_format_index = (id - ID_TRAY_AREA_FORMAT) as usize;
+                self.controls
+                    .set_area_format_index((id - ID_TRAY_AREA_FORMAT) as usize);
                 self.settings.tray_area.format =
                     Format::from_index((id - ID_TRAY_AREA_FORMAT) as usize);
                 self.controls.load_tray(&self.settings, true);
-                self.controls.read_ui(&mut self.settings);
+                self.controls.read_ui(&mut self.settings, true);
                 self.controls.refresh_formats();
             }
             170..=172 => {
-                self.controls.tray_video_format_index = (id - ID_TRAY_VIDEO_FORMAT) as usize;
+                self.controls
+                    .set_video_format_index((id - ID_TRAY_VIDEO_FORMAT) as usize);
                 self.settings.tray_video.format =
                     Format::from_index((id - ID_TRAY_VIDEO_FORMAT) as usize);
                 self.controls.load_tray(&self.settings, false);
-                self.controls.read_ui(&mut self.settings);
+                self.controls.read_ui(&mut self.settings, true);
                 self.controls.refresh_formats();
             }
             ID_RESOLUTION
@@ -792,13 +813,21 @@ impl App {
             | ID_AUTOSTART..=ID_CARD
             | ID_THREADS
             | ID_SCALE
+            | ID_CURSOR
+            | ID_TRAY_AREA_CURSOR
+            | ID_TRAY_VIDEO_CURSOR
             | ID_TRAY_AUDIO_SYSTEM
             | ID_TRAY_AUDIO_MIC => {
-                self.controls.read_ui(&mut self.settings);
+                self.controls.read_ui(&mut self.settings, true);
                 self.sync_outline();
             }
             ID_SHOT_SCREEN | ID_TRAY_SHOT => self.screenshot_screen(),
             ID_SHOT_SOURCE => self.capture_source(true),
+            ui::ID_SOURCE_CLOSE => self.controls.close_sources(),
+            ui::ID_COPY_OUTPUT => self.copy_output(),
+            id if (ui::SOURCE_ROW_BASE..500).contains(&id) => {
+                self.finish_source((id - ui::SOURCE_ROW_BASE) as usize)
+            }
             ID_STOP | ID_TRAY_STOP => self.stop_capture(),
             ID_TRAY_OPEN => {
                 if self.window_shown() {
@@ -814,7 +843,7 @@ impl App {
                 if let Some((index, click)) = ui::history_click(id) {
                     if let Some(path) = self.history.get(index).map(|(path, _)| path.clone()) {
                         match click {
-                            ui::HistoryClick::Label => self.copy_path(&path),
+                            ui::HistoryClick::Label => self.copy_path(id, &path),
                             ui::HistoryClick::CopyFile => self.copy_file(id, &path),
                             ui::HistoryClick::Reveal => self.reveal(&path),
                             ui::HistoryClick::Open => self.open_file(&path),
@@ -844,10 +873,26 @@ impl App {
     }
 
     fn capture_source(&mut self, screenshot: bool) {
-        self.controls.read_ui(&mut self.settings);
-        let Some(chosen) = capture::choose_source(self.hwnd) else {
+        self.controls.read_ui(&mut self.settings, true);
+        let sources = capture::list_sources();
+        if sources.is_empty() {
+            self.error(&tr("No capture sources were found"));
+            return;
+        }
+        self.source_screenshot = screenshot;
+        let monitors = sources.iter().filter(|source| source.monitor).count();
+        self.controls.show_sources(
+            sources.into_iter().map(|source| source.label).collect(),
+            monitors,
+        );
+    }
+
+    fn finish_source(&mut self, index: usize) {
+        self.controls.close_sources();
+        let Some(chosen) = capture::choose_source_index(index) else {
             return;
         };
+        let screenshot = self.source_screenshot;
         match chosen {
             capture::Chosen::Monitor(rect) => {
                 if screenshot {
@@ -897,7 +942,7 @@ impl App {
     }
 
     fn screenshot_screen(&mut self) {
-        self.controls.read_ui(&mut self.settings);
+        self.controls.read_ui(&mut self.settings, true);
         let recording = self.mode == Mode::Recording;
         if recording {
             self.outline.hide();
@@ -917,6 +962,7 @@ impl App {
     }
 
     fn begin(&mut self, place: StartPlace) {
+        logging::info(format!("capture begin {place:?}"));
         match place {
             StartPlace::CaptureSource => self.capture_source(false),
             StartPlace::ShotRegion => self.open_region(place, true),
@@ -943,7 +989,7 @@ impl App {
         }
         let recording = self.mode == Mode::Recording;
         self.hide_region = hide;
-        self.controls.read_ui(&mut self.settings);
+        self.controls.read_ui(&mut self.settings, true);
         if !recording {
             self.conceal_for_ui(hide);
         }
@@ -969,6 +1015,9 @@ impl App {
     }
 
     fn region_done(&mut self) {
+        if !region::active() {
+            return;
+        }
         let resume = self.mode == Mode::Recording || self.mode == Mode::Saving;
         match region::take_outcome() {
             Some(region::Outcome::Record(rect, format)) => {
@@ -1040,7 +1089,7 @@ impl App {
         if self.mode != Mode::Idle || self.session.is_some() {
             return;
         }
-        self.controls.read_ui(&mut self.settings);
+        self.controls.read_ui(&mut self.settings, true);
         let recording = self.recording_for(source, take, force_format);
         if recording.video().is_none() && !recording.audio().system && !recording.audio().microphone
         {
@@ -1201,6 +1250,13 @@ impl App {
                 let result = self.finalizer.as_mut().map(|f| f.step());
                 match result {
                     Some(Ok(Some(path))) => {
+                        unsafe {
+                            // SAFETY: The HWND is the main window, and this timer
+                            // was armed when the save started. Without this the
+                            // idle app would wake ten times a second forever.
+                            KillTimer(self.hwnd, TIMER_ID)
+                        }
+                        .ok();
                         self.finalizer = None;
                         self.mode = Mode::Idle;
                         self.saving_started = None;
@@ -1210,6 +1266,9 @@ impl App {
                         }
                         self.restore_window();
                         self.update_state();
+                        if !self.window_shown() {
+                            trim_working_set();
+                        }
                         if self.quit_after_save {
                             self.request_exit();
                         }
@@ -1243,6 +1302,7 @@ impl App {
     }
 
     fn completed(&mut self, path: PathBuf) {
+        logging::info(format!("saved {}", path.display()));
         if self.settings.clipboard {
             if let Err(error) = media::copy_file_to_clipboard(&path) {
                 self.error(&error);
@@ -1289,20 +1349,45 @@ impl App {
     }
 
     fn open_path(&mut self, path: &std::path::Path) {
-        self.copy_path(path);
+        self.copy_text(path);
         self.reveal(path);
     }
 
-    fn copy_path(&mut self, path: &std::path::Path) {
+    fn copy_output(&mut self) {
+        let result = media::output_dir()
+            .and_then(|dir| media::copy_text_to_clipboard(&dir.display().to_string()));
+        match result {
+            Ok(()) => logging::info("copied output folder"),
+            Err(error) => self.error(&error),
+        }
+    }
+
+    fn copy_text(&mut self, path: &std::path::Path) {
         if let Err(error) = media::copy_text_to_clipboard(&path.display().to_string()) {
             self.error(&error);
         }
     }
 
+    fn copy_path(&mut self, id: i32, path: &std::path::Path) {
+        match media::copy_text_to_clipboard(&path.display().to_string()) {
+            Ok(()) => {
+                logging::info(format!("copied path {}", path.display()));
+                self.controls.acknowledge_copy(id);
+            }
+            Err(error) => self.error(&error),
+        }
+    }
+
     fn copy_file(&mut self, id: i32, path: &std::path::Path) {
         match media::copy_file_to_clipboard(path) {
-            Ok(()) => self.controls.acknowledge_copy(id),
-            Err(error) => self.error(&error),
+            Ok(()) => {
+                logging::info(format!("copied file {}", path.display()));
+                self.controls.acknowledge_copy(id);
+            }
+            Err(error) => {
+                logging::warn(format!("copy file failed: {error}"));
+                self.error(&error);
+            }
         }
     }
 
@@ -1319,6 +1404,7 @@ impl App {
     }
 
     fn error(&self, text: &str) {
+        logging::error(text);
         self.controls.set_text(ID_STATUS, text);
         unsafe {
             // SAFETY: The HWND is a window or child control this program created and still owns.
@@ -1336,16 +1422,9 @@ impl App {
         if !hide_while_active(from_window, self.settings.hide_active) {
             return;
         }
-        let visible = unsafe {
-            // SAFETY: The HWND is a window this program created.
-            IsWindowVisible(self.hwnd)
-        }
-        .as_bool();
+        let visible = ui::visible();
         self.restore_visible = remember_restore(self.restore_visible, visible);
-        unsafe {
-            // SAFETY: The HWND is a window this program created.
-            ShowWindow(self.hwnd, SW_HIDE)
-        };
+        ui::hide();
     }
 
     fn restore_window(&mut self) {
@@ -1356,15 +1435,47 @@ impl App {
     }
 
     fn window_shown(&self) -> bool {
-        unsafe {
-            // SAFETY: The HWND is the main window this program created.
-            IsWindowVisible(self.hwnd).as_bool() && !IsIconic(self.hwnd).as_bool()
+        ui::visible()
+    }
+
+    fn apply_language(&mut self) {
+        i18n::init(&self.settings.ui_language);
+        ui::relabel(&self.controls);
+        self.refresh_tray_texts();
+        self.update_state();
+        logging::info(format!("language: {}", self.settings.ui_language));
+    }
+
+    fn refresh_tray_texts(&mut self) {
+        let items = [
+            (ID_TRAY_AREA, "Select area"),
+            (ID_TRAY_VIDEO, "Record video"),
+            (ID_TRAY_AUDIO, "Record audio"),
+            (ID_TRAY_SHOT, "Screenshot screen"),
+            (ID_TRAY_STOP, "Stop capture"),
+            (ID_TRAY_RESET_SCALE, "Reset Scale"),
+            (ID_TRAY_EXIT, "Exit"),
+        ];
+        for (id, key) in items {
+            let mut text = wide(&tr(key));
+            let info = MENUITEMINFOW {
+                cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
+                fMask: MIIM_STRING,
+                dwTypeData: PWSTR(text.as_mut_ptr()),
+                cch: text.len() as u32,
+                ..Default::default()
+            };
+            unsafe {
+                // SAFETY: The text buffer lives through the call and the menu is owned by this window.
+                SetMenuItemInfoW(self.tray_menu, id as u32, false, &info).ok();
+            }
         }
+        self.sync_window_item();
     }
 
     fn sync_window_item(&self) {
         let mut label = wide(&tray_window_label(self.window_shown()));
-        let mut info = MENUITEMINFOW {
+        let info = MENUITEMINFOW {
             cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
             fMask: MIIM_STRING,
             dwTypeData: PWSTR(label.as_mut_ptr()),
@@ -1373,26 +1484,26 @@ impl App {
         };
         unsafe {
             // SAFETY: The menu belongs to this window. The label lives until SetMenuItemInfoW returns, and only the text is replaced.
-            SetMenuItemInfoW(self.tray_menu, ID_TRAY_OPEN as u32, false, &mut info).ok();
+            SetMenuItemInfoW(self.tray_menu, ID_TRAY_OPEN as u32, false, &info).ok();
         }
     }
 
     fn show_window(&self) {
-        unsafe {
-            // SAFETY: The HWND is the main window this program created.
-
-            ShowWindow(self.hwnd, SW_RESTORE);
-            ShowWindow(self.hwnd, SW_SHOW);
-            SetForegroundWindow(self.hwnd);
-            SetFocus(self.hwnd);
-        }
+        logging::info("window shown");
+        ui::show(&self.controls);
     }
 
-    fn hide_window(&self) {
-        unsafe {
-            // SAFETY: The HWND is the main window this program created.
-            ShowWindow(self.hwnd, SW_HIDE)
-        };
+    fn hide_window(&mut self) {
+        // The window may be closed while a slider still has an unsaved value.
+        self.controls.read_ui(&mut self.settings, true);
+        logging::info("window hidden");
+        ui::hide();
+        if self.mode == Mode::Idle {
+            // Nothing is playing: give the working set back to the system. The
+            // message loop still waits with zero wakeups, and the pages fault
+            // back in only when the window is opened again.
+            trim_working_set();
+        }
     }
 
     fn request_exit(&mut self) {
@@ -1405,6 +1516,8 @@ impl App {
             self.quit_after_save = true;
             return;
         }
+        self.controls.read_ui(&mut self.settings, true);
+        ui::hide();
         if region::active() {
             region::cancel();
         }
@@ -1413,6 +1526,7 @@ impl App {
             Shell_NotifyIconW(NIM_DELETE, &self.tray)
         }
         .ok();
+        self.tray_added = false;
         if self.status_icon != self.base_icon {
             unsafe {
                 // SAFETY: The icon was created for this window and is no longer the one in use.
@@ -1421,20 +1535,53 @@ impl App {
             .ok();
         }
         unsafe {
-            // SAFETY: The icon was created for this window and is no longer the one in use.
-            DestroyIcon(self.base_icon)
-        }
-        .ok();
-        unsafe {
             // SAFETY: The menu belongs to the main window, and the id is one of its items.
             DestroyWindow(self.hwnd)
         }
         .ok();
     }
 
+    fn drain_ui(&mut self) {
+        for request in ui::take_requests() {
+            match request {
+                ui::UiRequest::Command { id, notification } => self.command(id, notification),
+                ui::UiRequest::Slider { id, value, persist } => self.slider(id, value, persist),
+                ui::UiRequest::CloseRequested => {
+                    if self.settings.close_tray {
+                        self.hide_window();
+                    } else {
+                        self.request_exit();
+                    }
+                }
+            }
+        }
+    }
+
+    fn slider(&mut self, id: i32, value: u32, persist: bool) {
+        if ui::profile_for_microphone(id).is_some() {
+            self.set_mic_gain(id, value, persist);
+            self.controls.read_ui(&mut self.settings, persist);
+            return;
+        }
+        self.controls.set_slider(id, value);
+        let fps = value.clamp(5, 60);
+        self.controls.set_text(
+            if id == 164 {
+                ID_TRAY_AREA_FPS_VALUE
+            } else if id == 174 {
+                ID_TRAY_VIDEO_FPS_VALUE
+            } else {
+                ID_FPS_VALUE
+            },
+            &trf("{fps} FPS", &[("fps", &fps.to_string())]),
+        );
+        self.controls.read_ui(&mut self.settings, persist);
+    }
+
     fn update_state(&mut self) {
         let idle = self.mode == Mode::Idle;
         self.controls.set_idle(idle, self.mode == Mode::Recording);
+        self.controls.set_saving(self.mode == Mode::Saving);
         if self.mode == Mode::Idle {
             self.controls.set_text(ID_STOP, &tr("Stop capture"));
         }
@@ -1465,20 +1612,48 @@ impl App {
             .unwrap_or(0);
         let tip = match self.mode {
             Mode::Recording => recording_tip(self.recording_kind, elapsed),
-            Mode::Saving => tr("ezcap — saving"),
-            _ => "ezcap".into(),
+            Mode::Saving => tr("Capture Button — saving"),
+            _ => "Capture Button".into(),
         };
         self.set_tray_status(&tip);
     }
 }
 
-// SAFETY: Windows calls this with a window of this class. Paint uses the DC from BeginPaint, and every other message is forwarded to DefWindowProc.
+// SAFETY: Windows calls this with a window of this class. The body is wrapped so
+// that a panic in a paint or layout path cannot terminate a tray app that is
+// meant to run for months; the release profile unwinds instead of aborting.
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     message: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wnd_proc_inner(hwnd, message, wparam, lparam)
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            // Never leave a windowless process blocked in GetMessage if a panic
+            // happened during teardown.
+            if message == WM_DESTROY {
+                PostQuitMessage(0);
+            }
+            LRESULT(0)
+        }
+    }
+}
+
+unsafe fn wnd_proc_inner(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let taskbar = TASKBAR_CREATED.load(Ordering::Relaxed);
+    if taskbar != 0 && message == taskbar {
+        if !APP.is_null() {
+            app().readd_tray();
+        }
+        return LRESULT(0);
+    }
+    if APP.is_null() && message != WM_CREATE {
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
     match message {
         WM_CREATE => {
             APP = Box::into_raw(Box::new(App::new(hwnd)));
@@ -1489,38 +1664,8 @@ unsafe extern "system" fn wnd_proc(
             app().command(command_id(wparam.0), notification(wparam.0));
             LRESULT(0)
         }
-        WM_HSCROLL => {
-            let slider = HWND(lparam.0 as *mut std::ffi::c_void);
-            let gain_id = {
-                let controls = &app().controls;
-                [
-                    ID_MIC_GAIN,
-                    ID_TRAY_AREA_GAIN,
-                    ID_TRAY_VIDEO_GAIN,
-                    ID_TRAY_AUDIO_GAIN,
-                ]
-                .into_iter()
-                .find(|id| controls.get(*id) == slider)
-            };
-            if let Some(id) = gain_id {
-                let value = app().controls.microphone_gain(id);
-                let persist = (wparam.0 & 0xffff) as u32 != TB_THUMBTRACK;
-                app().set_mic_gain(id, value, persist);
-                return LRESULT(0);
-            }
-            let (fps_id, value_id) = if slider == app().controls.get(ID_TRAY_AREA_FORMAT + 4) {
-                (ID_TRAY_AREA_FORMAT + 4, ID_TRAY_AREA_FPS_VALUE)
-            } else if slider == app().controls.get(ID_TRAY_VIDEO_FORMAT + 4) {
-                (ID_TRAY_VIDEO_FORMAT + 4, ID_TRAY_VIDEO_FPS_VALUE)
-            } else {
-                (ID_FPS, ID_FPS_VALUE)
-            };
-            let fps =
-                SendMessageW(app().controls.get(fps_id), WM_USER, WPARAM(0), LPARAM(0)).0 as u32;
-            app()
-                .controls
-                .set_text(value_id, &trf("{fps} FPS", &[("fps", &fps.to_string())]));
-            app().controls.read_ui(&mut app().settings);
+        WM_UI => {
+            app().drain_ui();
             LRESULT(0)
         }
         WM_MEASUREITEM => {
@@ -1540,13 +1685,13 @@ unsafe extern "system" fn wnd_proc(
             };
             if kind == ODT_MENU {
                 draw_tray_item(lparam);
-            } else {
-                ui::draw_button(lparam, &app().controls);
             }
             LRESULT(1)
         }
         WM_TIMER => {
-            if wparam.0 == ui::HISTORY_ACK_TIMER {
+            if wparam.0 == TRAY_RETRY_TIMER {
+                app().retry_tray();
+            } else if wparam.0 == ui::HISTORY_ACK_TIMER {
                 app().controls.clear_history_ack();
                 unsafe {
                     // SAFETY: The HWND is the main window, and this timer id is the copy acknowledgement.
@@ -1588,96 +1733,20 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_REGION => {
-            app().region_done();
+            // A posted notification can outlive the overlay (a double click on
+            // Copy, or a stale message). Only consume an outcome while one exists.
+            if region::active() {
+                app().region_done();
+            }
             LRESULT(0)
         }
         WM_ACTIVATE_APP => {
             app().show_window();
             LRESULT(0)
         }
-        WM_PAINT => {
-            let mut paint = PAINTSTRUCT::default();
-            let dc = BeginPaint(hwnd, &mut paint);
-            let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect).ok();
-            FillRect(dc, &rect, app().background);
-            if !APP.is_null() {
-                app().controls.paint_scrollbar(dc);
-            }
-            EndPaint(hwnd, &paint);
-            LRESULT(0)
-        }
-        WM_MOUSEWHEEL => {
-            if !APP.is_null() && app().controls.page == 1 {
-                let delta = ((wparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
-                app().controls.scroll_by(-delta / 120 * 60);
-            }
-            LRESULT(0)
-        }
-        WM_LBUTTONDOWN => {
-            let (x, y) = point_of(lparam);
-            if !APP.is_null() && app().controls.scrollbar_press(x, y) {
-                unsafe {
-                    // SAFETY: The window belongs to this process; capture only routes the mouse here.
-                    SetCapture(hwnd);
-                }
-                return LRESULT(0);
-            }
-            DefWindowProcW(hwnd, message, wparam, lparam)
-        }
-        WM_MOUSEMOVE => {
-            let (_, y) = point_of(lparam);
-            if !APP.is_null() && app().controls.scrollbar_move(y) {
-                return LRESULT(0);
-            }
-            DefWindowProcW(hwnd, message, wparam, lparam)
-        }
-        WM_LBUTTONUP => {
-            if !APP.is_null() && app().controls.scrollbar_release() {
-                unsafe {
-                    // SAFETY: The capture was taken by this window.
-                    ReleaseCapture().ok();
-                }
-                return LRESULT(0);
-            }
-            DefWindowProcW(hwnd, message, wparam, lparam)
-        }
-        WM_ERASEBKGND => {
-            if APP.is_null() {
-                return DefWindowProcW(hwnd, message, wparam, lparam);
-            }
-            LRESULT(1)
-        }
-        WM_CTLCOLORSTATIC => {
-            let dc = HDC(wparam.0 as *mut std::ffi::c_void);
-            let control = HWND(lparam.0 as *mut std::ffi::c_void);
-            let id = GetDlgCtrlID(control);
-            let link = (id == ID_STATUS && app().saved_path.is_some()) || ui::history_id(id);
-            SetTextColor(dc, if link { theme::ACCENT } else { TEXT });
-            SetBkColor(dc, BACKGROUND);
-            LRESULT(app().background.0 as isize)
-        }
-        WM_NOTIFY => {
-            let header = unsafe {
-                // SAFETY: Windows passes an NMHDR that lives for this message.
-                &*(lparam.0 as *const NMHDR)
-            };
-            let id = unsafe {
-                // SAFETY: The HWND belongs to a control of this window.
-                GetDlgCtrlID(header.hwndFrom)
-            };
-            if header.code == NM_CUSTOMDRAW && ui::is_trackbar(id) {
-                let draw = unsafe {
-                    // SAFETY: NM_CUSTOMDRAW shares the NMHDR layout this message carries.
-                    &mut *(lparam.0 as *mut NMCUSTOMDRAW)
-                };
-                return ui::paint_trackbar(draw);
-            }
-            DefWindowProcW(hwnd, message, wparam, lparam)
-        }
         WM_CLOSE => {
             if app().settings.close_tray {
-                ShowWindow(hwnd, SW_HIDE);
+                app().hide_window();
             } else {
                 app().request_exit();
             }
@@ -1685,6 +1754,8 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_DESTROY => {
             KillTimer(hwnd, TIMER_ID).ok();
+            KillTimer(hwnd, TRAY_RETRY_TIMER).ok();
+            ui::hide();
             app().outline.hide();
             region::shutdown();
             PostQuitMessage(0);
@@ -1748,27 +1819,21 @@ fn draw_tray_item(lparam: LPARAM) {
     };
     let selected = (item.itemState.0 & ODS_SELECTED.0) != 0;
     let grayed = (item.itemState.0 & (ODS_GRAYED.0 | ODS_DISABLED.0)) != 0;
-    let background = unsafe {
-        // SAFETY: The color index is a system color. The brush is deleted in this function.
-        GetSysColor(if selected {
-            COLOR_HIGHLIGHT
-        } else {
-            COLOR_MENU
-        })
+    let background = if selected {
+        theme::ACCENT
+    } else {
+        theme::SURFACE
     };
-    let ink = unsafe {
-        // SAFETY: The color index is a system color.
-        GetSysColor(if grayed {
-            COLOR_GRAYTEXT
-        } else if selected {
-            COLOR_HIGHLIGHTTEXT
-        } else {
-            COLOR_MENUTEXT
-        })
+    let ink = if grayed {
+        theme::DISABLED
+    } else if selected {
+        theme::ON_ACCENT
+    } else {
+        theme::TEXT
     };
     unsafe {
         // SAFETY: The DC belongs to the menu item being drawn. The brush is deleted before return.
-        let brush = CreateSolidBrush(COLORREF(background));
+        let brush = CreateSolidBrush(background);
         FillRect(item.hDC, &item.rcItem, brush);
         DeleteObject(brush);
         let bitmap = HBITMAP(item.itemData as *mut std::ffi::c_void);
@@ -1783,17 +1848,12 @@ fn draw_tray_item(lparam: LPARAM) {
             DeleteDC(memory);
         }
         let mut text = [0u16; 80];
-        let len = GetMenuStringW(
-            app().tray_menu,
-            item.itemID as u32,
-            Some(&mut text),
-            MF_BYCOMMAND,
-        )
-        .max(0) as usize;
+        let len = GetMenuStringW(app().tray_menu, item.itemID, Some(&mut text), MF_BYCOMMAND).max(0)
+            as usize;
         let mut rect = item.rcItem;
         rect.left += 8 + 32 + 8;
         SetBkMode(item.hDC, TRANSPARENT);
-        SetTextColor(item.hDC, COLORREF(ink));
+        SetTextColor(item.hDC, ink);
         DrawTextW(
             item.hDC,
             &mut text[..len],
@@ -1995,7 +2055,7 @@ fn tray_status_icon(base: HICON, mode: Mode) -> HICON {
             return base;
         };
         let old = SelectObject(dc, bitmap);
-        let brush = CreateSolidBrush(BACKGROUND);
+        let brush = CreateSolidBrush(theme::SURFACE);
         FillRect(
             dc,
             &RECT {
@@ -2044,28 +2104,14 @@ fn tray_status_icon(base: HICON, mode: Mode) -> HICON {
     }
 }
 
-/// Blend the title bar into the window. Windows 11 honors these attributes;
-/// older versions ignore the call, and the default caption is fine there.
-fn paint_title_bar(window: HWND) {
-    use windows::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
-    };
-    for (attribute, color) in [
-        (DWMWA_CAPTION_COLOR, theme::BACKGROUND.0),
-        (DWMWA_TEXT_COLOR, theme::TEXT.0),
-    ] {
-        let value = color;
-        unsafe {
-            // SAFETY: The window belongs to this process, and the attribute is a
-            // plain COLORREF whose size is passed in.
-            DwmSetWindowAttribute(
-                window,
-                attribute,
-                &value as *const u32 as *const std::ffi::c_void,
-                std::mem::size_of::<u32>() as u32,
-            )
-            .ok();
-        }
+/// Returns the unused pages of a hidden, idle process to the system. This does
+/// not reduce commit (the EXE is still mapped), but it keeps the working set of
+/// a tray-only instance small until the window is opened again.
+fn trim_working_set() {
+    unsafe {
+        // SAFETY: The handle is the current process, and both sizes are SIZE_T(-1),
+        // which asks the system to trim the working set.
+        SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX).ok();
     }
 }
 
@@ -2078,19 +2124,31 @@ fn main() {
             None,
             windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
         );
+        // Registered before the window exists, so the first Explorer restart is
+        // already covered.
+        TASKBAR_CREATED.store(
+            RegisterWindowMessageW(w!("TaskbarCreated")),
+            Ordering::Relaxed,
+        );
         let name = if test_mode() {
-            w!("Local\\ezcap.test.single.instance")
+            w!("Local\\CaptureButton.test.single.instance")
         } else {
-            w!("Local\\ezcap.single.instance")
+            w!("Local\\CaptureButton.single.instance")
         };
-        let mutex = CreateMutexW(None, false, name).unwrap();
-        if GetLastError() == ERROR_ALREADY_EXISTS {
+        let mutex = CreateMutexW(None, false, name).unwrap_or_default();
+        if !mutex.0.is_null() && GetLastError() == ERROR_ALREADY_EXISTS {
             if let Ok(hwnd) = FindWindowW(CLASS, TITLE) {
                 PostMessageW(hwnd, WM_ACTIVATE_APP, WPARAM(0), LPARAM(0)).ok();
             }
             return;
         }
         i18n::init(&Settings::load().ui_language);
+        logging::init();
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            logging::error(format!("panic: {info}"));
+            hook(info);
+        }));
         media::init();
         let instance = GetModuleHandleW(None).unwrap();
         let class = WNDCLASSW {
@@ -2099,34 +2157,48 @@ fn main() {
             hInstance: instance.into(),
             hIcon: LoadIconW(instance, module_icon()).unwrap_or_default(),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap(),
-            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as usize as *mut std::ffi::c_void),
             lpszClassName: CLASS,
             ..Default::default()
         };
         RegisterClassW(&class);
         region::register(instance.into());
         let minimized = std::env::args().any(|a| a == "--minimized");
-        let window = CreateWindowExW(
+        let window = match CreateWindowExW(
             WINDOW_EX_STYLE(0),
             CLASS,
             TITLE,
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
+            WS_POPUP,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            664,
-            720,
+            1,
+            1,
             None,
             None,
             instance,
             None,
-        )
-        .unwrap();
-        paint_title_bar(window);
+        ) {
+            Ok(window) => window,
+            Err(error) => {
+                let text = wide(&trf(
+                    "Capture Button could not start: {error}",
+                    &[("error", &error.to_string())],
+                ));
+                MessageBoxW(None, PCWSTR(text.as_ptr()), TITLE, MB_OK | MB_ICONERROR);
+                return;
+            }
+        };
+        let _ = window;
         if !minimized {
             app().show_window();
+        } else {
+            trim_working_set();
         }
         let mut message = MSG::default();
-        while GetMessageW(&mut message, None, 0, 0).into() {
+        loop {
+            let result = GetMessageW(&mut message, None, 0, 0).0;
+            if result == 0 || result == -1 {
+                break;
+            }
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }

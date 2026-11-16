@@ -64,12 +64,12 @@ function New-ThirdPartyNotice {
         }
     }
     $text = New-Object System.Text.StringBuilder
-    [void]$text.AppendLine("ezcap $Version")
+    [void]$text.AppendLine("Capture Button $Version")
     [void]$text.AppendLine("")
     [void]$text.AppendLine("This executable includes third-party components. COPYING is the GNU GPL v2 or later for FFmpeg and x264. NOTICE summarizes the obligations. The texts below are the copyright and license notices those components require.")
     [void]$text.AppendLine("")
-    [void]$text.AppendLine("ezcap source for this version:")
-    [void]$text.AppendLine("https://github.com/machine202502/ezcap/tree/v$Version")
+    [void]$text.AppendLine("Capture Button source for this version:")
+    [void]$text.AppendLine("https://github.com/machine202502/capture-button/tree/v$Version")
     [void]$text.AppendLine("")
     [void]$text.AppendLine("vcpkg commit: $commit")
     [void]$text.AppendLine("")
@@ -238,13 +238,13 @@ if (-not $env:FFMPEG_DIR) {
     throw "Set FFMPEG_DIR to the static FFmpeg prefix before packaging."
 }
 
-Write-Host "Building ezcap $Version"
-cargo build --release --bin ezcap
+Write-Host "Building Capture Button $Version"
+cargo build --release --bin CaptureButton
 if ($LASTEXITCODE -ne 0) {
     throw "cargo build --release failed"
 }
 
-$exe = Join-Path $Root "target\release\ezcap.exe"
+$exe = Join-Path $Root "target\release\CaptureButton.exe"
 if (-not (Test-Path $exe)) {
     throw "Release executable was not produced: $exe"
 }
@@ -255,7 +255,7 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $thirdParty = Join-Path $dist "THIRD-PARTY.txt"
 Set-Content -Path $thirdParty -Encoding utf8 -Value (New-ThirdPartyNotice -Version $Version -FfmpegDir $env:FFMPEG_DIR)
 
-$portable = Join-Path $dist "ezcap-$Version-windows-x64.zip"
+$portable = Join-Path $dist "CaptureButton-$Version-windows-x64.zip"
 if (Test-Path $portable) {
     Remove-Item $portable
 }
@@ -264,7 +264,7 @@ if (Test-Path $stage) {
     Remove-Item $stage -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
-Copy-Item $exe (Join-Path $stage "ezcap.exe")
+Copy-Item $exe (Join-Path $stage "CaptureButton.exe")
 Copy-Item (Join-Path $Root "COPYING") (Join-Path $stage "COPYING")
 Copy-Item (Join-Path $Root "NOTICE") (Join-Path $stage "NOTICE")
 Copy-Item $thirdParty (Join-Path $stage "THIRD-PARTY.txt")
@@ -281,13 +281,13 @@ if (-not $iscc) {
     throw "Inno Setup 6 was not found. Install it so ISCC.exe can build the installer."
 }
 
-$iss = Join-Path $Root "installer\ezcap.iss"
+$iss = Join-Path $Root "installer\CaptureButton.iss"
 & $iscc "/DAppVersion=$Version" "/DSourceExe=$exe" "/DThirdParty=$thirdParty" $iss
 if ($LASTEXITCODE -ne 0) {
     throw "ISCC failed"
 }
 
-$setup = Join-Path $dist "ezcap-$Version-windows-x64-setup.exe"
+$setup = Join-Path $dist "CaptureButton-$Version-windows-x64-setup.exe"
 if (-not (Test-Path $setup)) {
     throw "Installer was not produced: $setup"
 }

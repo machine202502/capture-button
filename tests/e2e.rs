@@ -68,8 +68,8 @@ fn find_app_window(process_id: u32) -> HWND {
         // SAFETY: The class and title are literals. A missing window yields an invalid handle, which the caller checks.
 
         let mut hwnd = FindWindowW(
-            windows::core::w!("ezcap.window"),
-            windows::core::w!("ezcap"),
+            windows::core::w!("CaptureButton.window"),
+            windows::core::w!("Capture Button"),
         )
         .unwrap_or_default();
         while !hwnd.is_invalid() {
@@ -168,7 +168,7 @@ fn check_decodable_audio(path: &PathBuf, minimum_samples: usize) {
 fn records_every_output_format_through_the_real_ui() {
     ffmpeg_next::init().unwrap();
     let mut app = TestApp {
-        child: Command::new(env!("CARGO_BIN_EXE_ezcap"))
+        child: Command::new(env!("CARGO_BIN_EXE_CaptureButton"))
             .arg("--test-mode")
             .spawn()
             .unwrap(),

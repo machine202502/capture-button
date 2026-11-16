@@ -3,48 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ezcap — screen recorder and screenshots for Windows</title>
-  <meta name="description" content="ezcap records the screen, a window, or a region, and takes screenshots and short GIFs. A free app for Windows 10 and 11, with no account.">
+  <title>Capture Button — screen recording and screenshots for Windows</title>
+  <meta name="description" content="Capture Button records the screen, a window or a region, takes screenshots, and builds short GIF and WebP clips. A free app for Windows 10 and 11, with no account.">
   <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#3e8cc4">
-  <link rel="canonical" href="https://machine202502.github.io/ezcap/en/">
-  <link rel="alternate" hreflang="ru" href="https://machine202502.github.io/ezcap/">
-  <link rel="alternate" hreflang="en" href="https://machine202502.github.io/ezcap/en/">
-  <link rel="alternate" hreflang="zh" href="https://machine202502.github.io/ezcap/zh/">
-  <link rel="alternate" hreflang="x-default" href="https://machine202502.github.io/ezcap/en/">
+  <meta name="theme-color" content="#041018">
+  <link rel="canonical" href="https://machine202502.github.io/capture-button/en/">
+  <link rel="alternate" hreflang="ru" href="https://machine202502.github.io/capture-button/">
+  <link rel="alternate" hreflang="en" href="https://machine202502.github.io/capture-button/en/">
+  <link rel="alternate" hreflang="zh" href="https://machine202502.github.io/capture-button/zh/">
+  <link rel="alternate" hreflang="x-default" href="https://machine202502.github.io/capture-button/en/">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="ezcap">
+  <meta property="og:site_name" content="Capture Button">
   <meta property="og:locale" content="en_US">
   <meta property="og:locale:alternate" content="ru_RU">
   <meta property="og:locale:alternate" content="zh_CN">
-  <meta property="og:title" content="ezcap — screen recorder and screenshots for Windows">
-  <meta property="og:description" content="Record the screen, a window, or a region. Take screenshots and short GIFs. Free for Windows 10 and 11.">
-  <meta property="og:url" content="https://machine202502.github.io/ezcap/en/">
-  <meta property="og:image" content="https://machine202502.github.io/ezcap/assets/icon.png">
+  <meta property="og:title" content="Capture Button — screen recording and screenshots for Windows">
+  <meta property="og:description" content="Record the screen, a window or a region. Take screenshots and short GIF and WebP clips. Free for Windows 10 and 11.">
+  <meta property="og:url" content="https://machine202502.github.io/capture-button/en/">
+  <meta property="og:image" content="https://machine202502.github.io/capture-button/assets/icon.png">
+  <meta property="og:image:alt" content="Capture Button icon">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="ezcap — screen recorder and screenshots for Windows">
-  <meta name="twitter:description" content="Record the screen, a window, or a region. Take screenshots and short GIFs. Free for Windows 10 and 11.">
-  <meta name="twitter:image" content="https://machine202502.github.io/ezcap/assets/icon.png">
+  <meta name="twitter:title" content="Capture Button — screen recording and screenshots for Windows">
+  <meta name="twitter:description" content="Record the screen, a window or a region. Take screenshots and short GIF and WebP clips. Free for Windows 10 and 11.">
+  <meta name="twitter:image" content="https://machine202502.github.io/capture-button/assets/icon.png">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    "name": "ezcap",
+    "name": "Capture Button",
     "applicationCategory": "MultimediaApplication",
     "operatingSystem": "Windows 10, Windows 11",
     "inLanguage": "en",
-    "url": "https://machine202502.github.io/ezcap/en/",
-    "downloadUrl": "https://github.com/machine202502/ezcap/releases/latest",
-    "description": "Screen, window, and region recording, plus screenshots and short GIFs for Windows.",
+    "url": "https://machine202502.github.io/capture-button/en/",
+    "downloadUrl": "https://github.com/machine202502/capture-button/releases/latest",
+    "license": "https://github.com/machine202502/capture-button/blob/master/LICENSE",
+    "description": "Screen, window and region recording, plus screenshots and short GIF and WebP clips for Windows.",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
   }
   </script>
   <link rel="icon" type="image/png" href="../assets/icon.png">
+  <link rel="apple-touch-icon" href="../assets/icon.png">
   <link rel="stylesheet" href="../styles.css">
   <script>
     (function () {
       var chosen = null;
-      try { chosen = localStorage.getItem("ezcap-lang"); } catch (e) {}
+      try { chosen = localStorage.getItem("capture-button-lang"); } catch (e) {}
       var codes = ["ru", "en", "zh"];
       var here = document.documentElement.lang.slice(0, 2);
       var base = here === "ru" ? "" : "../";
@@ -66,188 +69,515 @@
 </head>
 <body>
 
-  <div class="blob blob-a" aria-hidden="true"></div>
-  <div class="blob blob-b" aria-hidden="true"></div>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <canvas id="ocean" aria-hidden="true"></canvas>
+  <div class="page-veil" aria-hidden="true"></div>
+  <div class="page-grain" aria-hidden="true"></div>
 
-  <header class="nav">
-    <a class="brand" href="#top">
-      <img src="../assets/icon.png" alt="ezcap" width="34" height="34">
-      <span>ezcap</span>
-    </a>
-    <nav class="nav-links">
-      <a href="#features">Features</a>
-      <a href="#screens">Screenshots</a>
-      <a href="#download">Download</a>
-    </nav>
-    <nav class="langs" aria-label="Language">
-      <a href="../" hreflang="ru" lang="ru" data-lang-set="ru">RU</a>
-      <a href="./" hreflang="en" lang="en" data-lang-set="en" aria-current="true">EN</a>
-    
-      <a href="../zh/" hreflang="zh" lang="zh" data-lang-set="zh">中文</a>
-    </nav>
-    <a class="btn btn-ghost" href="https://github.com/machine202502/ezcap" target="_blank" rel="noopener">
-      <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-      GitHub
-    </a>
+  <header class="site-header" data-header>
+    <div class="header-inner wrap">
+      <a class="brand" href="#top" aria-label="Capture Button — home">
+        <img src="../assets/icon.png" alt="" width="40" height="40">
+        <span class="brand-copy">
+          <span class="brand-name">Capture Button</span>
+          <span class="brand-sub">screen · region · sound</span>
+        </span>
+      </a>
+
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="#features">Features</a>
+        <a href="#formats">Formats</a>
+        <a href="#screens">Interface</a>
+        <a href="#download">Download</a>
+      </nav>
+
+      <div class="header-tools">
+        <nav class="langs" aria-label="Language">
+          <a href="../" hreflang="ru" lang="ru" data-lang-set="ru">RU</a>
+          <a href="./" hreflang="en" lang="en" data-lang-set="en" aria-current="true">EN</a>
+          <a href="../zh/" hreflang="zh" lang="zh" data-lang-set="zh">中文</a>
+        </nav>
+        <a class="gh-link" href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
   </header>
 
-  <main id="top">
+  <main id="main">
 
-    <section class="hero">
-      <div class="hero-text reveal">
-        <span class="pill" data-version>version @@VERSION@@ · Windows 10/11, 64-bit</span>
-        <h1>Record the screen.<br>Take screenshots.<br><span class="accent">Nothing extra.</span></h1>
-        <p class="lead">
-          ezcap stays out of the way: one click to record, a region screenshot,
-          a GIF, and clean audio. No heavy editor. Press the button and keep the file.
-        </p>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="https://github.com/machine202502/ezcap/releases/latest/download/ezcap-@@VERSION@@-windows-x64-setup.exe" data-dl-setup>
-            Download installer
-          </a>
-          <a class="btn btn-secondary" href="https://github.com/machine202502/ezcap/releases/latest/download/ezcap-@@VERSION@@-windows-x64.zip" data-dl-zip>
-            Portable (.zip)
-          </a>
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-grid wrap">
+        <div class="hero-copy">
+          <p class="status-pill">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            Windows 10 / 11 <span class="sep" aria-hidden="true">·</span> 64-bit
+          </p>
+
+          <h1 class="display" id="hero-title">
+            Press.<br>
+            Capture.<br>
+            <span class="display-glow">Done.</span>
+          </h1>
+
+          <p class="lead">
+            <strong>Capture Button</strong> records the screen, a window or a region, takes
+            screenshots, and builds short GIF and WebP clips. System sound, microphone and a
+            region editor — all on one button.
+          </p>
+
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.exe" data-dl-setup>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+              Download installer
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64.zip" data-dl-zip>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="m3 8 2.5-4h13L21 8"/><path d="M3 8h18M10 12h4"/></svg>
+              Portable (.zip)
+            </a>
+          </div>
+
+          <p class="hero-links">
+            <a href="https://github.com/machine202502/capture-button/releases" target="_blank" rel="noopener">All releases <span aria-hidden="true">↗</span></a>
+            <span class="dot" aria-hidden="true">·</span>
+            <span>Windows 10/11, 64-bit</span>
+          </p>
+          <p class="micro">Free · source under MIT · the app includes FFmpeg and x264 and is distributed under GPL · no account and no cloud</p>
         </div>
-        <p class="hint">Free · source under MIT · the app with FFmpeg under GPL · no cloud and no account</p>
+
+        <div class="hero-visual">
+          <div class="orbit orbit-1" aria-hidden="true"></div>
+          <div class="orbit orbit-2" aria-hidden="true"></div>
+          <div class="capture-badge" aria-hidden="true"></div>
+
+          <figure class="hero-frame">
+            <button class="frame-btn" type="button" aria-label="Open a screenshot of the Capture Button main screen">
+              <img src="../assets/capture.png" alt="Capture Button main screen: MKV format, 2160p resolution, 60 FPS and audio sources" width="1124" height="1100" fetchpriority="high" decoding="async">
+            </button>
+            <figcaption>Part of the main screen. <span>Click to enlarge.</span></figcaption>
+          </figure>
+
+          <div class="float-chip chip-one" aria-hidden="true">
+            <span class="chip-k">MKV</span>
+            <span class="chip-v">up to 2160p · 60 FPS</span>
+          </div>
+          <div class="float-chip chip-two" aria-hidden="true">
+            <span class="chip-k">GIF · WebP</span>
+            <span class="chip-v">for chat and articles</span>
+          </div>
+          <div class="float-chip chip-three" aria-hidden="true">
+            <span class="chip-k">PNG</span>
+            <span class="chip-v">screenshots</span>
+          </div>
+        </div>
       </div>
-      <div class="hero-shot reveal">
-        <img src="../assets/main-en.png" alt="ezcap main window" width="1144" height="1560">
-      </div>
+
+      <a class="scroll-cue" href="#features">
+        <span>Scroll</span>
+        <i aria-hidden="true"></i>
+      </a>
     </section>
 
-    <section id="features" class="section">
-      <h2 class="reveal">Everything you need to record</h2>
-      <p class="section-sub reveal">Nothing you don't. Just the tools you use every day.</p>
-      <div class="cards">
-        <article class="card reveal">
-          <div class="card-icon">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/><circle cx="12" cy="11" r="3.2"/></svg>
-          </div>
-          <h3>Screen video</h3>
-          <p>Record the whole screen, one window, or a region. Up to 1080p and 60 FPS, saved as MKV.</p>
-        </article>
-        <article class="card reveal">
-          <div class="card-icon">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 9h20M7 3v3M17 3v3"/></svg>
-          </div>
-          <h3>Screenshots</h3>
-          <p>The whole screen, one window, or any region. Saved as PNG with one press.</p>
-        </article>
-        <article class="card reveal">
-          <div class="card-icon">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="m10 8 5 3-5 3V8Z" fill="currentColor" stroke="none"/></svg>
-          </div>
-          <h3>GIF and WebP</h3>
-          <p>Capture a short animation for a chat or an article. ezcap builds the GIF or WebP.</p>
-        </article>
-        <article class="card reveal">
-          <div class="card-icon">
-          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>
-          </div>
-          <h3>Clean audio</h3>
-          <p>System sound and the microphone together, with a separate mic boost. Audio only is fine too.</p>
-        </article>
-        <article class="card reveal">
-          <div class="card-icon">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
-          </div>
-          <h3>Region editor</h3>
-          <p>Select an area, then draw an arrow, add text, or cover something. Save it, copy it, or record it.</p>
-        </article>
-        <article class="card reveal">
-          <div class="card-icon">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14v18l-7-5-7 5V3Z"/></svg>
-          </div>
-          <h3>Always at hand</h3>
-          <p>It lives in the tray. Click the icon and recording starts. Recent files can be copied or shown in the folder.</p>
-        </article>
-      </div>
-    </section>
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow"><span>01</span> Features</p>
+          <h2 id="features-title">One button.<br><span class="dim">Six reasons to press it.</span></h2>
+          <p class="section-sub">Recording, screenshots, sound and region markup. No heavy editor, no extra windows.</p>
+        </header>
 
-    <section id="screens" class="section">
-      <h2 class="reveal">Looks simple. Works simply.</h2>
-      <div class="shots">
-        <figure class="shot reveal">
-          <img src="../assets/main-en.png" alt="Capture window" loading="lazy">
-          <figcaption>Main screen: format, quality, FPS, and audio sources</figcaption>
-        </figure>
-        <figure class="shot reveal">
-          <img src="../assets/region.png" alt="Region selection with annotations" loading="lazy">
-          <figcaption>Region selection with drawing, arrows, and text</figcaption>
-        </figure>
-        <figure class="shot reveal">
-          <img src="../assets/settings-en.png" alt="Settings" loading="lazy">
-          <figcaption>Settings: startup, tray, and recording profiles</figcaption>
-        </figure>
-      </div>
-    </section>
-
-    <section id="download" class="section">
-      <h2 class="reveal">Download ezcap</h2>
-      <p class="section-sub reveal">Windows 10/11, 64-bit. Both files are built from the source. The hashes below show the file was not replaced.</p>
-      <div class="dl-grid">
-        <article class="dl-card reveal">
-          <h3>Installer</h3>
-          <p class="dl-desc">A normal install for every user on the computer.</p>
-          <a class="btn btn-primary wide" href="https://github.com/machine202502/ezcap/releases/latest/download/ezcap-@@VERSION@@-windows-x64-setup.exe" data-dl-setup data-fallback="Download installer · Windows x64">
-            ezcap<span data-version>-@@VERSION@@-</span>windows-x64-setup.exe
-          </a>
-          <dl class="meta">
-            <div><dt>Size</dt><dd data-size-setup>@@SIZE_SETUP@@ MB</dd></div>
-            <div>
-              <dt>SHA-256</dt>
-              <dd class="hash"><code data-hash-setup>@@HASH_SETUP@@</code>
-                <button class="copy" data-copy="setup" title="Copy hash">
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-                </button>
-              </dd>
+        <div class="bento">
+          <article class="feature glass-card span-7 reveal">
+            <div class="feature-top">
+              <span class="feature-icon">
+                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/><circle cx="12" cy="11" r="3"/></svg>
+              </span>
+              <span class="feature-num">01</span>
             </div>
-          </dl>
-        </article>
-        <article class="dl-card reveal">
-          <h3>Portable</h3>
-          <p class="dl-desc">Unpack the archive and run ezcap.exe. Nothing to install.</p>
-          <a class="btn btn-secondary wide" href="https://github.com/machine202502/ezcap/releases/latest/download/ezcap-@@VERSION@@-windows-x64.zip" data-dl-zip data-fallback="Download portable archive (.zip)">
-            ezcap<span data-version>-@@VERSION@@-</span>windows-x64.zip
-          </a>
-          <dl class="meta">
-            <div><dt>Size</dt><dd data-size-zip>@@SIZE_ZIP@@ MB</dd></div>
-            <div>
-              <dt>SHA-256</dt>
-              <dd class="hash"><code data-hash-zip>@@HASH_ZIP@@</code>
-                <button class="copy" data-copy="zip" title="Copy hash">
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-                </button>
-              </dd>
+            <h3>Screen recording</h3>
+            <p>The whole screen, one window or a selected region. MKV, up to 2160p and 60 FPS; the mouse cursor can be shown or hidden.</p>
+            <div class="feature-tags">
+              <span class="tag">MKV</span>
+              <span class="tag">up to 2160p</span>
+              <span class="tag">60 FPS</span>
             </div>
-          </dl>
-        </article>
+          </article>
+
+          <article class="feature glass-card span-5 reveal">
+            <div class="feature-top">
+              <span class="feature-icon">
+                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
+              </span>
+              <span class="feature-num">02</span>
+            </div>
+            <h3>Screenshots</h3>
+            <p>The screen, a source or a region — saved as PNG with one press. Copy the file straight away or open its folder.</p>
+            <div class="feature-tags">
+              <span class="tag">PNG</span>
+              <span class="tag">Screen</span>
+              <span class="tag">Region</span>
+            </div>
+          </article>
+
+          <article class="feature glass-card span-4 reveal">
+            <div class="feature-top">
+              <span class="feature-icon">
+                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m10 9 5 3-5 3V9Z" fill="currentColor" stroke="none"/></svg>
+              </span>
+              <span class="feature-num">03</span>
+            </div>
+            <h3>GIF and WebP</h3>
+            <p>A short animation for a chat, an article or a bug report. Presets and a frame-rate control.</p>
+            <div class="feature-tags">
+              <span class="tag">GIF</span>
+              <span class="tag">WebP</span>
+              <span class="tag">Loop</span>
+            </div>
+          </article>
+
+          <article class="feature glass-card span-4 reveal">
+            <div class="feature-top">
+              <span class="feature-icon">
+                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>
+              </span>
+              <span class="feature-num">04</span>
+            </div>
+            <h3>Sound</h3>
+            <p>System sound and the microphone together, with a separate mic level. Audio only is fine too.</p>
+            <div class="feature-tags">
+              <span class="tag">System</span>
+              <span class="tag">Microphone</span>
+              <span class="tag">MP3</span>
+            </div>
+          </article>
+
+          <article class="feature glass-card span-4 reveal">
+            <div class="feature-top">
+              <span class="feature-icon">
+                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 21 4-1 11-11a2.1 2.1 0 0 0-3-3L4 17l-1 4Z"/><path d="m13.5 6.5 3 3"/></svg>
+              </span>
+              <span class="feature-num">05</span>
+            </div>
+            <h3>Region editor</h3>
+            <p>Draw an arrow, add text, crop or cover something right on the selection. Save it, copy it or start recording.</p>
+            <div class="feature-tags">
+              <span class="tag">Annotations</span>
+              <span class="tag">Redaction</span>
+            </div>
+          </article>
+
+          <article class="feature feature--wide glass-card span-12 reveal">
+            <div class="feature-wide-copy">
+              <div class="feature-top">
+                <span class="feature-icon">
+                  <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14v18l-7-5-7 5V3Z"/></svg>
+                </span>
+                <span class="feature-num">06</span>
+              </div>
+              <h3>Lives in the tray</h3>
+              <p>Click the icon and capture starts. Recent files are at hand: open, copy or show in the folder.</p>
+              <div class="feature-tags">
+                <span class="tag">Tray</span>
+                <span class="tag">History</span>
+                <span class="tag">Clipboard</span>
+              </div>
+            </div>
+            <div class="tray-motif" aria-hidden="true">
+              <div class="tray-row">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9"/><path d="M18 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg>
+                <span class="tray-line"></span>
+                <span class="tray-action">open</span>
+              </div>
+              <div class="tray-row">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                <span class="tray-line"></span>
+                <span class="tray-action">copy</span>
+              </div>
+              <div class="tray-row">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+                <span class="tray-line"></span>
+                <span class="tray-action">folder</span>
+              </div>
+            </div>
+          </article>
+        </div>
       </div>
-      <p class="reveal gh-note">
-        Every version, the source, and the history are on
-        <a href="https://github.com/machine202502/ezcap" target="_blank" rel="noopener">GitHub ↗</a>
-      </p>
-      <p class="reveal license-note">
-        The ezcap source is under the
-        <a href="https://github.com/machine202502/ezcap/blob/master/LICENSE">MIT license</a>.
-        The downloadable program includes FFmpeg and x264, so the program file itself
-        is distributed under the
-        <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html">GNU GPL version 2 or later</a>.
-        Overlay icons are from <a href="https://phosphoricons.com">Phosphor Icons</a>,
-        <a href="https://github.com/machine202502/ezcap/blob/master/assets/Phosphor.LICENSE">MIT</a>.
-        The zip and the install folder include COPYING, NOTICE, and THIRD-PARTY.txt,
-        with the texts for FFmpeg, x264, zlib, libwebp, LAME, and the Rust crates.
-      </p>
+    </section>
+
+    <section class="manifesto" aria-labelledby="manifesto-title">
+      <div class="wrap manifesto-inner">
+        <h2 class="manifesto-title reveal" id="manifesto-title">Local.<br><span>No account.</span><br>No cloud.</h2>
+        <p class="manifesto-note reveal">Capture Button writes files straight to disk. No subscriptions, no profiles and no uploads to a server — just the capture and the finished file.</p>
+      </div>
+    </section>
+
+    <section class="section" id="formats" aria-labelledby="formats-title">
+      <div class="wrap">
+        <header class="section-head section-head--split reveal">
+          <div>
+            <p class="eyebrow"><span>02</span> Formats</p>
+            <h2 id="formats-title">One capture.<br><span class="dim">Three formats.</span></h2>
+          </div>
+          <p class="section-sub">Pick the format for the job: full video, a loop for chat or a compact animation for the web.</p>
+        </header>
+
+        <div class="format-grid">
+          <article class="format-card glass-card reveal">
+            <div class="format-top">
+              <span class="format-kicker">Video</span>
+              <span class="format-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
+            <h3 class="format-name">MKV</h3>
+            <p class="format-sub">Full quality</p>
+            <p>H.264 video and sound. Up to 2160p and 60 FPS — for tutorials, demos and bug reports.</p>
+            <div class="format-tags">
+              <span class="tag">H.264</span>
+              <span class="tag">up to 60 FPS</span>
+            </div>
+          </article>
+
+          <article class="format-card glass-card reveal">
+            <div class="format-top">
+              <span class="format-kicker">Loop</span>
+              <span class="format-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
+            <h3 class="format-name">GIF</h3>
+            <p class="format-sub">A loop for chat</p>
+            <p>A short animation that opens anywhere. Presets and a frame-rate control.</p>
+            <div class="format-tags">
+              <span class="tag">Loop</span>
+              <span class="tag">Presets</span>
+            </div>
+          </article>
+
+          <article class="format-card glass-card reveal">
+            <div class="format-top">
+              <span class="format-kicker">Web</span>
+              <span class="format-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
+            <h3 class="format-name">WebP</h3>
+            <p class="format-sub">Compact animation</p>
+            <p>For articles and documentation: the same short fragment in a modern format.</p>
+            <div class="format-tags">
+              <span class="tag">Animation</span>
+              <span class="tag">Web</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="screens" aria-labelledby="screens-title">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow"><span>03</span> Interface</p>
+          <h2 id="screens-title">Nothing in the way.</h2>
+          <p class="section-sub">One screen: format, resolution, frame rate and sound. Settings sit on the second tab; the tray is always at hand.</p>
+        </header>
+
+        <div class="gallery">
+          <figure class="shot shot--main reveal">
+            <button class="shot-btn" type="button" aria-label="Open a screenshot of the Capture Button main screen">
+              <img src="../assets/capture-controls.png" alt="Capture Button main screen with format, resolution, frame rate and audio source controls" width="1124" height="1100" loading="lazy" decoding="async">
+            </button>
+            <figcaption>
+              <span class="cap-index">01</span>
+              <span class="cap-text">Main screen: format, resolution, FPS and audio sources.</span>
+              <span class="cap-open">Open</span>
+            </figcaption>
+          </figure>
+
+          <figure class="shot shot--about reveal">
+            <button class="shot-btn" type="button" aria-label="Open a screenshot of the About window">
+              <img src="../assets/about.png" alt="Capture Button About window with the version and license notices for FFmpeg, x264 and Phosphor Icons" width="1124" height="1100" loading="lazy" decoding="async">
+            </button>
+            <figcaption>
+              <span class="cap-index">02</span>
+              <span class="cap-text">About: version and the FFmpeg, x264 and Phosphor Icons notices.</span>
+              <span class="cap-open">Open</span>
+            </figcaption>
+          </figure>
+
+          <figure class="shot shot--region reveal">
+            <button class="shot-btn" type="button" aria-label="Open a screenshot of region selection">
+              <img src="../assets/region.png" alt="Region selection overlay with a frame, toolbar, arrow and resize handles" width="1366" height="768" loading="lazy" decoding="async">
+            </button>
+            <figcaption>
+              <span class="cap-index">03</span>
+              <span class="cap-text">Region selection: frame, toolbar, arrows and text.</span>
+              <span class="cap-open">Open</span>
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="download" aria-labelledby="download-title">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow"><span>04</span> Download</p>
+          <h2 id="download-title">Download Capture Button</h2>
+          <p class="section-sub">Windows 10/11, 64-bit. Installer or a portable archive with CaptureButton.exe. Both are built from the source; SHA-256 helps you check the download.</p>
+        </header>
+
+        <div class="download-layout">
+          <div class="dl-stack">
+            <article class="dl-card glass-card reveal">
+              <div class="dl-head">
+                <span class="dl-icon">
+                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                </span>
+                <div>
+                  <h3>Installer</h3>
+                  <p class="dl-desc">A normal install for every user. CaptureButton.exe and the license texts are inside.</p>
+                </div>
+                <span class="dl-tag">EXE</span>
+              </div>
+              <a class="dl-btn dl-btn--primary" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.exe" data-dl-setup data-fallback="Download installer · Windows x64">
+                <span class="dl-file">CaptureButton<span data-version>-@@VERSION@@-</span>windows-x64-setup.exe</span>
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>
+              </a>
+              <dl class="meta">
+                <div><dt>Size</dt><dd data-size-setup>@@SIZE_SETUP@@ MB</dd></div>
+                <div>
+                  <dt>SHA-256</dt>
+                  <dd class="hash"><code data-hash-setup>@@HASH_SETUP@@</code>
+                    <button class="copy" type="button" data-copy="setup" aria-label="Copy the installer SHA-256" title="Copy SHA-256">
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                    </button>
+                  </dd>
+                </div>
+              </dl>
+            </article>
+
+            <article class="dl-card glass-card reveal">
+              <div class="dl-head">
+                <span class="dl-icon">
+                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="m3 8 2.5-4h13L21 8"/><path d="M3 8h18M10 12h4"/></svg>
+                </span>
+                <div>
+                  <h3>Portable</h3>
+                  <p class="dl-desc">Unpack the archive and run CaptureButton.exe. Nothing to install.</p>
+                </div>
+                <span class="dl-tag">ZIP</span>
+              </div>
+              <a class="dl-btn dl-btn--ghost" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64.zip" data-dl-zip data-fallback="Download the portable archive (.zip)">
+                <span class="dl-file">CaptureButton<span data-version>-@@VERSION@@-</span>windows-x64.zip</span>
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>
+              </a>
+              <dl class="meta">
+                <div><dt>Size</dt><dd data-size-zip>@@SIZE_ZIP@@ MB</dd></div>
+                <div>
+                  <dt>SHA-256</dt>
+                  <dd class="hash"><code data-hash-zip>@@HASH_ZIP@@</code>
+                    <button class="copy" type="button" data-copy="zip" aria-label="Copy the portable archive SHA-256" title="Copy SHA-256">
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                    </button>
+                  </dd>
+                </div>
+              </dl>
+            </article>
+          </div>
+
+          <aside class="req-panel glass-card reveal" aria-labelledby="req-title">
+            <p class="eyebrow"><span>·</span> Before you download</p>
+            <h3 id="req-title">Requirements</h3>
+            <ul class="req-list">
+              <li>
+                <span class="req-key">OS</span>
+                <span class="req-val"><strong>Windows 10 or 11</strong>A 64-bit system</span>
+              </li>
+              <li>
+                <span class="req-key">Install</span>
+                <span class="req-val"><strong>Installer or portable</strong>The archive runs without installation</span>
+              </li>
+              <li>
+                <span class="req-key">Account</span>
+                <span class="req-val"><strong>Not needed</strong>Files stay on the disk</span>
+              </li>
+              <li>
+                <span class="req-key">Languages</span>
+                <span class="req-val"><strong>English · Русский · 中文</strong>English is built in; RU and ZH are JSON catalogs next to CaptureButton.exe</span>
+              </li>
+            </ul>
+            <p class="req-note">The installer needs administrator rights; the portable archive does not. License texts are included in both.</p>
+          </aside>
+        </div>
+
+        <p class="release-note reveal">
+          <span>Every version, the source and the history are on GitHub.</span>
+          <a href="https://github.com/machine202502/capture-button/releases" target="_blank" rel="noopener">Releases <span aria-hidden="true">↗</span></a>
+          <a href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener">Source <span aria-hidden="true">↗</span></a>
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="licenses" aria-labelledby="licenses-title">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow"><span>05</span> Licenses</p>
+          <h2 id="licenses-title">Open source.<br><span class="dim">Clear terms.</span></h2>
+          <p class="section-sub">The source is open and every third-party component is named explicitly — the full license texts travel with the app.</p>
+        </header>
+
+        <div class="license-band glass-card reveal">
+          <div class="license-grid">
+            <article>
+              <p class="license-kicker">Source code</p>
+              <h3>MIT</h3>
+              <p>The Capture Button source can be read, changed and built.</p>
+              <p><a href="https://github.com/machine202502/capture-button/blob/master/LICENSE" target="_blank" rel="noopener">LICENSE <span aria-hidden="true">↗</span></a></p>
+            </article>
+            <article>
+              <p class="license-kicker">Program</p>
+              <h3>GPL-2.0-or-later</h3>
+              <p>The built program includes FFmpeg and x264, so it is distributed under the GNU GPL v2 or later.</p>
+              <p><a href="https://github.com/machine202502/capture-button/blob/master/COPYING" target="_blank" rel="noopener">COPYING <span aria-hidden="true">↗</span></a></p>
+            </article>
+            <article>
+              <p class="license-kicker">Icons</p>
+              <h3>Phosphor · MIT</h3>
+              <p>The overlay icons come from Phosphor Icons. The license text is in the source tree.</p>
+              <p><a href="https://github.com/machine202502/capture-button/blob/master/assets/Phosphor.LICENSE" target="_blank" rel="noopener">Phosphor.LICENSE <span aria-hidden="true">↗</span></a></p>
+            </article>
+          </div>
+          <p class="license-fine">
+            The archive and the install folder include COPYING, NOTICE and THIRD-PARTY.txt, with
+            the texts for <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">FFmpeg</a>,
+            <a href="https://www.videolan.org/developers/x264.html" target="_blank" rel="noopener">x264</a>,
+            zlib, libwebp, LAME and the Rust crates. The Capture Button source is MIT; the downloaded program is GPL.
+          </p>
+        </div>
+      </div>
     </section>
 
   </main>
 
-  <footer class="footer">
-    <img src="../assets/icon.png" alt="" width="22" height="22">
-    <span>ezcap · source <a href="https://github.com/machine202502/ezcap/blob/master/LICENSE">MIT</a> · program <a href="https://github.com/machine202502/ezcap/blob/master/COPYING">GPL</a> · <span data-year></span></span>
+  <footer class="site-footer">
+    <div class="footer-grid wrap">
+      <div class="footer-brand">
+        <img src="../assets/icon.png" alt="" width="34" height="34">
+        <div>
+          <strong>Capture Button</strong>
+          <span>Windows 10/11 · 64-bit</span>
+        </div>
+      </div>
+      <nav class="footer-nav" aria-label="Footer links">
+        <a href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/machine202502/capture-button/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="#licenses">Licenses</a>
+      </nav>
+      <p class="footer-legal">
+        © <span data-year>2026</span> Capture Button · source
+        <a href="https://github.com/machine202502/capture-button/blob/master/LICENSE" target="_blank" rel="noopener">MIT</a>
+        · program
+        <a href="https://github.com/machine202502/capture-button/blob/master/COPYING" target="_blank" rel="noopener">GPL</a>
+      </p>
+    </div>
   </footer>
 
-  <script src="../app.js"></script>
+  <script src="../ocean.js" defer></script>
+  <script src="../app.js" defer></script>
 </body>
 </html>
