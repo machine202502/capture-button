@@ -27,7 +27,6 @@
     "Screenshot screen": "截取屏幕",
     "Capture video": "录制视频",
     "Capture audio": "录制音频",
-    "Reset Scale": "重置缩放",
     "Exit": "退出",
     "Enable System audio or Microphone before capturing audio": "录制音频前请启用系统声音或麦克风",
     "Stop capture  {time}": "停止录制  {time}",

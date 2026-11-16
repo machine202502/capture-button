@@ -178,16 +178,6 @@ fn the_red_outline_is_only_for_a_region_recording() {
 }
 
 #[test]
-fn reset_scale_stays_available_from_the_tray() {
-    for mode in [Mode::Idle, Mode::Recording, Mode::Saving, Mode::Selecting] {
-        assert!(
-            accepts_command(mode, ID_TRAY_RESET_SCALE, false),
-            "{mode:?}"
-        );
-    }
-}
-
-#[test]
 fn the_tray_window_item_closes_an_open_window_and_opens_a_hidden_one() {
     assert_eq!(tray_window_label(true), "Close window");
     assert_eq!(tray_window_label(false), "Open window");

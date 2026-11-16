@@ -51,7 +51,6 @@ const ID_TRAY_AUDIO: i32 = 203;
 const ID_TRAY_STOP: i32 = 204;
 const ID_TRAY_EXIT: i32 = 205;
 const ID_TRAY_OPEN: i32 = 206;
-const ID_TRAY_RESET_SCALE: i32 = 207;
 
 static mut APP: *mut App = std::ptr::null_mut();
 /// The shell's broadcast message; Explorer restarts drop every tray icon until
@@ -159,7 +158,6 @@ fn accepts_command(mode: Mode, id: i32, region_open: bool) -> bool {
                 | ID_TRAY_STOP
                 | ID_TRAY_EXIT
                 | ID_TRAY_OPEN
-                | ID_TRAY_RESET_SCALE
                 | ID_STATUS
                 | ID_ABOUT
                 | ui::ID_ABOUT_CLOSE
@@ -538,17 +536,6 @@ impl App {
             AppendMenuW(
                 self.tray_menu,
                 MF_STRING,
-                ID_TRAY_RESET_SCALE as usize,
-                i18n::pcw("Reset Scale"),
-            )
-        }
-        .unwrap();
-        items.push((ID_TRAY_RESET_SCALE, tr("Reset Scale"), MenuGlyph::Scale));
-        unsafe {
-            // SAFETY: The menu belongs to this window, and the item text is NUL-terminated for the duration of the call.
-            AppendMenuW(
-                self.tray_menu,
-                MF_STRING,
                 ID_TRAY_EXIT as usize,
                 i18n::pcw("Exit"),
             )
@@ -729,9 +716,8 @@ impl App {
             return;
         }
 
-        if notification == BN_CLICKED as u16 && ui::is_checkbox(id) {
-            self.controls.toggle(id);
-        }
+        // Slint's Toggle already updates the model before it posts this command.
+        // Native BN_CLICKED is 0, so toggling again here would undo every click.
         if id == ID_MIC_DEVICE
             || id == ID_TRAY_AREA_DEVICE
             || id == ID_TRAY_VIDEO_DEVICE
@@ -856,7 +842,6 @@ impl App {
                 }
             }
             ID_TRAY_EXIT => self.request_exit(),
-            ID_TRAY_RESET_SCALE => self.controls.set_interface_scale(&mut self.settings, 100),
             ID_STATUS if notification == 0 => self.open_saved(),
             id if notification == 0 => {
                 if let Some((index, click)) = ui::history_click(id) {
@@ -1550,7 +1535,6 @@ impl App {
             (ID_TRAY_AUDIO, "Record audio"),
             (ID_TRAY_SHOT, "Screenshot screen"),
             (ID_TRAY_STOP, "Stop capture"),
-            (ID_TRAY_RESET_SCALE, "Reset Scale"),
             (ID_TRAY_EXIT, "Exit"),
         ];
         for (id, key) in items {
@@ -1869,7 +1853,6 @@ enum MenuGlyph {
     Video,
     Audio,
     Stop,
-    Scale,
     Exit,
 }
 
@@ -2082,24 +2065,6 @@ fn paint_menu_glyph(pixels: &mut [u8], size: i32, glyph: MenuGlyph) {
                 for x in 4..12 {
                     put(pixels, x, y, red);
                 }
-            }
-        }
-        MenuGlyph::Scale => {
-            for x in 2..14 {
-                put(pixels, x, 2, sea);
-                put(pixels, x, 13, sea);
-            }
-            for y in 3..13 {
-                put(pixels, 2, y, sea);
-                put(pixels, 13, y, sea);
-            }
-            for x in 6..10 {
-                put(pixels, x, 6, sea);
-                put(pixels, x, 9, sea);
-            }
-            for y in 7..9 {
-                put(pixels, 6, y, sea);
-                put(pixels, 9, y, sea);
             }
         }
         MenuGlyph::Exit => {

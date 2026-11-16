@@ -775,14 +775,16 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_about_open(model.about_open);
     ui.set_source_open(model.source_open);
     ui.set_camera_open(model.camera_open);
-    ui.set_camera_items(slint::ModelRc::new(slint::VecModel::from(
-        model
-            .camera_items
-            .iter()
-            .cloned()
-            .map(slint::SharedString::from)
-            .collect::<Vec<_>>(),
-    )));
+    if model.camera_open {
+        ui.set_camera_items(slint::ModelRc::new(slint::VecModel::from(
+            model
+                .camera_items
+                .iter()
+                .cloned()
+                .map(slint::SharedString::from)
+                .collect::<Vec<_>>(),
+        )));
+    }
     ui.set_source_monitors(model.source_monitors as i32);
     ui.set_history_ack(model.history_ack.unwrap_or(-1));
     ui.set_source_monitor_items(slint::ModelRc::new(slint::VecModel::from(
