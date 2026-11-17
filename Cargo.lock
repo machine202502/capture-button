@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "capture-button"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "cpal",
  "ffmpeg-next",

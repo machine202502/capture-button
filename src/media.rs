@@ -662,19 +662,88 @@ pub fn copy_image_to_clipboard(frame: &Frame) -> Result<(), String> {
     }
 }
 
-pub fn completion_sound() {
+/// The single shutter sound the app plays for screenshots and camera photos.
+pub fn screenshot_sound(volume: u32) {
+    static SOUND: &[u8] = include_bytes!("../assets/shutter.wav");
+    play_sound(SOUND, volume);
+}
+
+pub fn completion_sound(volume: u32) {
     static SOUND: &[u8] = include_bytes!("../assets/recording-saved.wav");
-    // SAFETY: The WAV bytes are embedded for the process lifetime, and SND_MEMORY plays that buffer.
-    unsafe {
-        windows::Win32::Media::Audio::PlaySoundW(
-            PCWSTR(SOUND.as_ptr().cast()),
-            None,
-            windows::Win32::Media::Audio::SND_MEMORY
-                | windows::Win32::Media::Audio::SND_ASYNC
-                | windows::Win32::Media::Audio::SND_NODEFAULT,
-        )
+    play_sound(SOUND, volume);
+}
+
+/// Play an embedded WAV at `volume` percent. `PlaySoundW` has no volume
+/// parameter, so the PCM body is copied and scaled before playback. The copy
+/// lives on the playing thread for the whole synchronous call.
+fn play_sound(wav: &[u8], volume: u32) {
+    let data = wav_at_volume(wav, volume.min(100));
+    std::thread::Builder::new()
+        .name("CaptureButton-sound".into())
+        .spawn(move || {
+            // SAFETY: `data` holds the complete WAV image and outlives the
+            // synchronous call; SND_MEMORY reads only that buffer.
+            unsafe {
+                windows::Win32::Media::Audio::PlaySoundW(
+                    PCWSTR(data.as_ptr().cast()),
+                    None,
+                    windows::Win32::Media::Audio::SND_MEMORY
+                        | windows::Win32::Media::Audio::SND_SYNC
+                        | windows::Win32::Media::Audio::SND_NODEFAULT,
+                )
+                .ok();
+            }
+        })
         .ok();
+}
+
+/// A copy of `wav` with its 16-bit PCM body scaled to `volume` percent. Any
+/// other encoding, or a malformed header, is returned unchanged.
+fn wav_at_volume(wav: &[u8], volume: u32) -> Vec<u8> {
+    let mut data = wav.to_vec();
+    if volume >= 100 {
+        return data;
     }
+    let Some((start, length)) = wav_pcm16(wav) else {
+        return data;
+    };
+    let end = start + length;
+    for sample in data[start..end].as_chunks_mut::<2>().0 {
+        let value = i16::from_le_bytes([sample[0], sample[1]]) as i32;
+        sample.copy_from_slice(&((value * volume as i32 / 100) as i16).to_le_bytes());
+    }
+    data
+}
+
+/// Locate the 16-bit PCM samples in a RIFF/WAVE image.
+fn wav_pcm16(wav: &[u8]) -> Option<(usize, usize)> {
+    if wav.len() < 12 || &wav[..4] != b"RIFF" || &wav[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut offset = 12;
+    let mut bits = 0u16;
+    let mut pcm = false;
+    while offset + 8 <= wav.len() {
+        let id = &wav[offset..offset + 4];
+        let length =
+            u32::from_le_bytes([wav[offset + 4], wav[offset + 5], wav[offset + 6], wav[offset + 7]])
+                as usize;
+        let body = offset + 8;
+        if body + length > wav.len() {
+            return None;
+        }
+        match id {
+            b"fmt " if length >= 16 => {
+                let tag = u16::from_le_bytes([wav[body], wav[body + 1]]);
+                bits = u16::from_le_bytes([wav[body + 14], wav[body + 15]]);
+                pcm = tag == 1;
+            }
+            b"data" if pcm && bits == 16 => return Some((body, length)),
+            _ => {}
+        }
+        offset = body + length + (length & 1);
+    }
+    None
 }
 
 fn device_enumerator() -> Result<windows::Win32::Media::Audio::IMMDeviceEnumerator, String> {
@@ -1645,6 +1714,51 @@ mod tests {
             height: 64,
             data,
         }
+    }
+
+    fn wav_with_samples(samples: &[i16]) -> Vec<u8> {
+        let data_length = (samples.len() * 2) as u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_length).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&44100u32.to_le_bytes());
+        wav.extend_from_slice(&88200u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_length.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        wav
+    }
+
+    #[test]
+    fn playback_volume_scales_only_the_pcm_samples() {
+        let wav = wav_with_samples(&[1000, -2000, 32767, -32768]);
+        let half = wav_at_volume(&wav, 50);
+        assert_eq!(&half[..44], &wav[..44], "the WAV header stays untouched");
+        let scaled: Vec<i16> = half[44..]
+            .chunks_exact(2)
+            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
+            .collect();
+        assert_eq!(scaled, [500, -1000, 16383, -16384]);
+        assert_eq!(wav_at_volume(&wav, 100), wav);
+        assert!(wav_at_volume(&wav, 0)[44..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn every_embedded_sound_is_a_16_bit_pcm_wav() {
+        let (start, length) =
+            wav_pcm16(include_bytes!("../assets/shutter.wav")).expect("shutter is PCM");
+        assert!(start >= 44 && length > 2000, "{length} bytes of samples");
+        let (_, length) = wav_pcm16(include_bytes!("../assets/recording-saved.wav"))
+            .expect("completion asset is 16-bit PCM");
+        assert!(length > 40_000);
     }
 
     fn write_audio(writer: &mut VideoWriter, seconds: usize) {

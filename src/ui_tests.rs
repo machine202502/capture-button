@@ -178,6 +178,34 @@ fn the_red_outline_is_only_for_a_region_recording() {
 }
 
 #[test]
+fn a_camera_photo_blocks_every_capture_control() {
+    for id in [
+        ID_CAMERA_PHOTO,
+        ID_CAMERA_VIDEO,
+        ID_SHOT_SCREEN,
+        ID_SHOT_SOURCE,
+        ID_SHOT_REGION,
+        ID_CAPTURE_SCREEN,
+        ID_CAPTURE_SOURCE,
+        ID_CAPTURE_REGION,
+        ID_CAPTURE_AUDIO,
+        ID_TRAY_VIDEO,
+        ID_TRAY_AUDIO,
+        ID_TRAY_AREA,
+        ID_TRAY_SHOT,
+    ] {
+        assert!(
+            !accepts_command(Mode::Photo, id, false),
+            "control {id} must wait for the photo"
+        );
+    }
+    assert!(!tray_item_enabled(Mode::Photo, ID_TRAY_SHOT));
+    assert!(!tray_item_enabled(Mode::Photo, ID_TRAY_AREA));
+    assert!(!tray_item_enabled(Mode::Photo, ID_TRAY_STOP));
+    assert_eq!(Mode::Photo.activity(), geom::Activity::Saving);
+}
+
+#[test]
 fn the_tray_window_item_closes_an_open_window_and_opens_a_hidden_one() {
     assert_eq!(tray_window_label(true), "Close window");
     assert_eq!(tray_window_label(false), "Open window");

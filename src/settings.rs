@@ -160,6 +160,9 @@ pub struct Settings {
     pub tray_capture: bool,
     pub highlight_region: bool,
     pub completion_sound: bool,
+    /// Volume in percent for both sounds; 100 is the level of the WAV assets.
+    pub sound_volume: u32,
+    pub screenshot_sound: bool,
     pub show_no_signal: bool,
     pub show_card: bool,
     pub threads: u32,
@@ -183,6 +186,8 @@ impl Default for Settings {
             tray_capture: false,
             highlight_region: true,
             completion_sound: true,
+            sound_volume: 100,
+            screenshot_sound: true,
             show_no_signal: true,
             show_card: true,
             threads: 0,
@@ -370,6 +375,8 @@ impl Settings {
         settings.tray_capture = registry.dword("tray_capture", 0) != 0;
         settings.highlight_region = registry.dword("highlight_region", 1) != 0;
         settings.completion_sound = registry.dword("completion_sound", 1) != 0;
+        settings.sound_volume = registry.dword("sound_volume", 100).min(100);
+        settings.screenshot_sound = registry.dword("screenshot_sound", 1) != 0;
         settings.show_no_signal = registry.dword("show_no_signal", 1) != 0;
         settings.show_card = registry.dword("show_card", 1) != 0;
         settings.threads = registry.dword("threads", 0);
@@ -457,6 +464,8 @@ impl Settings {
         registry.set_dword("tray_capture", self.tray_capture as u32);
         registry.set_dword("highlight_region", self.highlight_region as u32);
         registry.set_dword("completion_sound", self.completion_sound as u32);
+        registry.set_dword("sound_volume", self.sound_volume.min(100));
+        registry.set_dword("screenshot_sound", self.screenshot_sound as u32);
         registry.set_dword("show_no_signal", self.show_no_signal as u32);
         registry.set_dword("show_card", self.show_card as u32);
         registry.set_dword("threads", self.threads);

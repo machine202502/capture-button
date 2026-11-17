@@ -20,6 +20,7 @@ use media::{Format, Rect};
 pub(crate) use settings::{test_mode, wide, CaptureSettings, ProfileRef, Settings};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Instant;
 use ui::*;
@@ -358,6 +359,9 @@ enum Mode {
     Selecting,
     Recording,
     Saving,
+    /// A camera photo is being taken on a worker thread. Every capture button
+    /// stays disabled until the photo is on disk.
+    Photo,
 }
 
 impl Mode {
@@ -366,7 +370,7 @@ impl Mode {
             Self::Idle => geom::Activity::Idle,
             Self::Selecting => geom::Activity::Selecting,
             Self::Recording => geom::Activity::Recording,
-            Self::Saving => geom::Activity::Saving,
+            Self::Saving | Self::Photo => geom::Activity::Saving,
         }
     }
 }
@@ -414,6 +418,7 @@ struct App {
     pending_camera: Option<crate::camera::CameraIndex>,
     pending_cameras: Vec<crate::camera::CameraIndex>,
     pending_camera_action: Option<bool>,
+    camera_photo: Option<Receiver<Result<PathBuf, String>>>,
     quit_after_save: bool,
     last_second: u64,
     outline: outline::RegionOutline,
@@ -460,6 +465,7 @@ impl App {
             pending_camera: None,
             pending_cameras: Vec::new(),
             pending_camera_action: None,
+            camera_photo: None,
             quit_after_save: false,
             last_second: u64::MAX,
             outline: outline::RegionOutline::new(),
@@ -809,6 +815,7 @@ impl App {
             | ID_SYSTEM_AUDIO
             | ID_MIC
             | ID_AUTOSTART..=ID_CARD
+            | ID_SCREENSHOT_SOUND
             | ID_THREADS
             | ID_SCALE
             | ID_CURSOR
@@ -892,7 +899,7 @@ impl App {
     }
 
     fn camera_action(&mut self, photo: bool) {
-        if self.mode != Mode::Idle {
+        if self.mode != Mode::Idle || self.camera_photo.is_some() {
             return;
         }
         self.controls.read_ui(&mut self.settings, true);
@@ -933,20 +940,58 @@ impl App {
     }
 
     fn start_camera(&mut self, index: &crate::camera::CameraIndex, photo: bool) {
-        if self.mode != Mode::Idle {
+        if self.mode != Mode::Idle || self.camera_photo.is_some() {
             return;
         }
         if photo {
             self.controls.read_ui(&mut self.settings, true);
-            match camera::photo(index) {
-                Ok(path) => self.completed(path),
-                Err(error) => self.error(&error),
+            let index = index.clone();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let started = std::thread::Builder::new()
+                .name("CaptureButton-photo".into())
+                .spawn(move || {
+                    sender.send(camera::photo(&index)).ok();
+                });
+            match started {
+                Ok(_) => {
+                    self.camera_photo = Some(receiver);
+                    self.mode = Mode::Photo;
+                    self.update_state();
+                    unsafe {
+                        // SAFETY: The HWND is the main window, and this timer id
+                        // is the one killed when the photo finishes.
+                        SetTimer(self.hwnd, TIMER_ID, 100, None)
+                    };
+                }
+                Err(error) => self.error(&error.to_string()),
             }
-            self.update_state();
             return;
         }
         self.pending_camera = Some(index.clone());
         self.start_capture(ProfileRef::Capture, Take::Picture, None, false, false, None);
+    }
+
+    fn finish_camera_photo(&mut self, result: Result<PathBuf, String>) {
+        unsafe {
+            // SAFETY: The HWND is the main window, and this timer was armed when
+            // the photo started.
+            KillTimer(self.hwnd, TIMER_ID)
+        }
+        .ok();
+        self.camera_photo = None;
+        self.saving_started = None;
+        self.mode = Mode::Idle;
+        match result {
+            Ok(path) => self.screenshot_saved(path),
+            Err(error) => self.error(&error),
+        }
+        self.update_state();
+        if !self.window_shown() {
+            trim_working_set();
+        }
+        if self.quit_after_save {
+            self.request_exit();
+        }
     }
 
     fn finish_source(&mut self, index: usize) {
@@ -987,7 +1032,7 @@ impl App {
             media::save_screenshot(rect, None)
         };
         match saved {
-            Ok(path) => self.completed(path),
+            Ok(path) => self.screenshot_saved(path),
             Err(error) => self.error(&error),
         }
     }
@@ -998,7 +1043,7 @@ impl App {
             Ok(path)
         });
         match saved {
-            Ok(path) => self.completed(path),
+            Ok(path) => self.screenshot_saved(path),
             Err(error) => self.error(&error),
         }
     }
@@ -1015,7 +1060,7 @@ impl App {
             media::save_screenshot(media::cursor_monitor_rect(), None)
         };
         match saved {
-            Ok(path) => self.completed(path),
+            Ok(path) => self.screenshot_saved(path),
             Err(error) => self.error(&error),
         }
         if recording {
@@ -1102,7 +1147,7 @@ impl App {
                 if !resume {
                     self.mode = Mode::Idle;
                 }
-                self.completed(path);
+                self.screenshot_saved(path);
                 if self.mode == Mode::Idle {
                     self.restore_window();
                 }
@@ -1303,6 +1348,17 @@ impl App {
                     self.stop_capture();
                 }
             }
+            Mode::Photo => {
+                let disconnected = tr("The camera did not return a photo");
+                let finished = match self.camera_photo.as_ref().map(|photo| photo.try_recv()) {
+                    Some(Ok(result)) => Some(result),
+                    Some(Err(TryRecvError::Disconnected)) => Some(Err(disconnected)),
+                    _ => None,
+                };
+                if let Some(result) = finished {
+                    self.finish_camera_photo(result);
+                }
+            }
             Mode::Saving => {
                 let elapsed = self
                     .saving_started
@@ -1330,7 +1386,7 @@ impl App {
                         self.saving_started = None;
                         self.completed(path);
                         if self.settings.completion_sound {
-                            media::completion_sound();
+                            media::completion_sound(self.settings.sound_volume);
                         }
                         self.restore_window();
                         self.update_state();
@@ -1385,6 +1441,15 @@ impl App {
         self.history.truncate(ui::HISTORY_COUNT as usize);
         settings::save_history(&self.history);
         self.refresh_history();
+    }
+
+    /// A screenshot or camera photo reached the disk. The completion sound
+    /// belongs to recordings; pictures get the screenshot sound.
+    fn screenshot_saved(&mut self, path: PathBuf) {
+        if self.settings.screenshot_sound {
+            media::screenshot_sound(self.settings.sound_volume);
+        }
+        self.completed(path);
     }
 
     fn refresh_history(&self) {
@@ -1593,7 +1658,7 @@ impl App {
             self.stop_capture();
             return;
         }
-        if self.mode == Mode::Saving {
+        if matches!(self.mode, Mode::Saving | Mode::Photo) {
             self.quit_after_save = true;
             return;
         }
@@ -1694,6 +1759,7 @@ impl App {
         let tip = match self.mode {
             Mode::Recording => recording_tip(self.recording_kind, elapsed),
             Mode::Saving => tr("Capture Button — saving"),
+            Mode::Photo => tr("Capture Button — camera"),
             _ => "Capture Button".into(),
         };
         self.set_tray_status(&tip);

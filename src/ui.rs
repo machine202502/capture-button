@@ -118,6 +118,8 @@ pub const ID_TRAY_AREA_GAIN_VALUE: i32 = 199;
 pub const ID_TRAY_VIDEO_GAIN_VALUE: i32 = 207;
 pub const ID_LANGUAGE_HEADING: i32 = 222;
 pub const ID_LANGUAGE: i32 = 223;
+pub const ID_SOUND_VOLUME: i32 = 226;
+pub const ID_SCREENSHOT_SOUND: i32 = 227;
 pub const ID_TRAY_AUDIO_GAIN_VALUE: i32 = 208;
 pub const MIC_GAIN_MAX: u32 = 300;
 
@@ -617,6 +619,10 @@ fn sync_labels(ui: &MainWindow) {
     labels.set_tray_capture(tr("Tray left-click starts the last capture").into());
     labels.set_highlight(tr("Outline the recorded region").into());
     labels.set_completion_sound(tr("Completion sound").into());
+    labels.set_sounds(tr("Sounds").into());
+    labels.set_volume(tr("Volume").into());
+    labels.set_play_on_save(tr("Play when a recording is saved").into());
+    labels.set_play_on_shot(tr("Play for screenshots and photos").into());
     labels.set_no_signal(tr("Show a no-signal frame").into());
     labels.set_show_card(tr("Show the webcam card").into());
     labels.set_tray_area(tr("Tray area").into());
@@ -760,6 +766,8 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_tray_capture(model.checked(ID_TRAY_CAPTURE));
     ui.set_highlight(model.checked(ID_HIGHLIGHT));
     ui.set_sound(model.checked(ID_NOTIFY));
+    ui.set_sound_volume(model.sound_volume as i32);
+    ui.set_shot_sound(model.checked(ID_SCREENSHOT_SOUND));
     ui.set_no_signal(model.checked(ID_NO_SIGNAL));
     ui.set_show_card(model.checked(ID_CARD));
     ui.set_capture_device(model.device_index[0] as i32);
@@ -881,6 +889,7 @@ struct Model {
     threads: usize,
     scale_index: usize,
     language: usize,
+    sound_volume: u32,
     gains: [u32; 4],
     devices: [Vec<media::AudioDevice>; 4],
     device_index: [usize; 4],
@@ -1146,6 +1155,7 @@ impl Controls {
             ID_FPS => model.fps[0] = value.clamp(5, 60),
             164 => model.fps[1] = value.clamp(5, 60),
             174 => model.fps[2] = value.clamp(5, 60),
+            ID_SOUND_VOLUME => model.sound_volume = value.min(100),
             ID_MIC_GAIN => model.gains[0] = value.min(MIC_GAIN_MAX),
             ID_TRAY_AREA_GAIN => model.gains[1] = value.min(MIC_GAIN_MAX),
             ID_TRAY_VIDEO_GAIN => model.gains[2] = value.min(MIC_GAIN_MAX),
@@ -1196,6 +1206,7 @@ impl Controls {
                 (ID_TRAY_CAPTURE, settings.tray_capture),
                 (ID_HIGHLIGHT, settings.highlight_region),
                 (ID_NOTIFY, settings.completion_sound),
+                (ID_SCREENSHOT_SOUND, settings.screenshot_sound),
                 (ID_NO_SIGNAL, settings.show_no_signal),
                 (ID_CARD, settings.show_card),
                 (ID_CURSOR, settings.ui.cursor),
@@ -1212,6 +1223,7 @@ impl Controls {
             };
             model.scale_index = scale_index(settings.scale);
             model.language = language_index(&settings.ui_language);
+            model.sound_volume = settings.sound_volume.min(100);
             model.apply_scale(settings);
         });
     }
@@ -1504,6 +1516,8 @@ impl Model {
         settings.tray_capture = self.checked(ID_TRAY_CAPTURE);
         settings.highlight_region = self.checked(ID_HIGHLIGHT);
         settings.completion_sound = self.checked(ID_NOTIFY);
+        settings.sound_volume = self.sound_volume.min(100);
+        settings.screenshot_sound = self.checked(ID_SCREENSHOT_SOUND);
         settings.threads = match self.threads {
             1 => 1,
             2 => 2,
@@ -1649,12 +1663,16 @@ mod tests {
         controls.set_slider(ID_FPS, 45);
         controls.check(ID_SYSTEM_AUDIO, true);
         controls.check(ID_MIC, true);
+        controls.set_slider(ID_SOUND_VOLUME, 35);
+        controls.check(ID_SCREENSHOT_SOUND, false);
         controls.read_ui(&mut settings, false);
         assert_eq!(settings.ui.format, Format::Gif);
         assert_eq!(settings.ui.video[Format::Gif.index()].height, 720);
         assert_eq!(settings.ui.video[Format::Gif.index()].fps, 45);
         assert!(settings.ui.audio.system);
         assert!(settings.ui.audio.microphone);
+        assert_eq!(settings.sound_volume, 35);
+        assert!(!settings.screenshot_sound);
     }
 
     #[test]

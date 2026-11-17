@@ -63,6 +63,10 @@ export global Labels {
     in property <string> tray_capture: "";
     in property <string> highlight: "";
     in property <string> completion_sound: "";
+    in property <string> sounds: "";
+    in property <string> volume: "";
+    in property <string> play_on_save: "";
+    in property <string> play_on_shot: "";
     in property <string> no_signal: "";
     in property <string> show_card: "";
     in property <string> tray_area: "";
@@ -386,6 +390,8 @@ export component MainWindow inherits Window {
     in-out property <bool> tray-capture: false;
     in-out property <bool> highlight: true;
     in-out property <bool> sound: true;
+    in-out property <int> sound-volume: 100;
+    in-out property <bool> shot-sound: true;
     in-out property <bool> no-signal: true;
     in-out property <bool> show-card: true;
     in-out property <int> capture-device: 0;
@@ -746,7 +752,6 @@ export component MainWindow inherits Window {
                         Toggle { label: Labels.clipboard; checked: root.clipboard; toggled => { root.toggle(154); } }
                         Toggle { label: Labels.tray_capture; checked: root.tray-capture; toggled => { root.toggle(155); } }
                         Toggle { label: Labels.highlight; checked: root.highlight; toggled => { root.toggle(156); } }
-                        Toggle { label: Labels.completion_sound; checked: root.sound; toggled => { root.toggle(157); } }
                         Toggle { label: Labels.no_signal; checked: root.no-signal; toggled => { root.toggle(158); } }
                         Toggle { label: Labels.show_card; checked: root.show-card; toggled => { root.toggle(159); } }
                     }
@@ -857,6 +862,25 @@ export component MainWindow inherits Window {
                             model: root.language-names;
                             current-index: root.language;
                             selected(value) => { root.choose(223, value); }
+                        }
+                    }
+
+                    Card {
+                        SectionTitle { text: Labels.sounds; }
+                        Toggle { label: Labels.play_on_save; checked: root.sound; toggled => { root.toggle(157); } }
+                        Toggle { label: Labels.play_on_shot; checked: root.shot-sound; toggled => { root.toggle(227); } }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            Text { text: Labels.volume; color: Palette.muted; font-size: 11px * ui-scale; width: 90px * ui-scale; vertical-alignment: center; }
+                            OceanSlider {
+                                horizontal-stretch: 1;
+                                minimum: 0;
+                                maximum: 100;
+                                value: root.sound-volume;
+                                changed(v) => { root.sound-volume = v; root.slide(226, v, false); }
+                                released => { root.slide(226, root.sound-volume, true); }
+                            }
+                            Text { text: root.sound-volume + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
                     }
                 }
