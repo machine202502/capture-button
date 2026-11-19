@@ -186,7 +186,7 @@ impl Default for Settings {
             tray_capture: false,
             highlight_region: true,
             completion_sound: true,
-            sound_volume: 100,
+            sound_volume: 50,
             screenshot_sound: true,
             show_no_signal: true,
             show_card: true,
@@ -375,7 +375,7 @@ impl Settings {
         settings.tray_capture = registry.dword("tray_capture", 0) != 0;
         settings.highlight_region = registry.dword("highlight_region", 1) != 0;
         settings.completion_sound = registry.dword("completion_sound", 1) != 0;
-        settings.sound_volume = registry.dword("sound_volume", 100).min(100);
+        settings.sound_volume = registry.dword("sound_volume", 50).min(100);
         settings.screenshot_sound = registry.dword("screenshot_sound", 1) != 0;
         settings.show_no_signal = registry.dword("show_no_signal", 1) != 0;
         settings.show_card = registry.dword("show_card", 1) != 0;
@@ -632,6 +632,11 @@ mod recording_profiles {
 
     fn picture(height: u32, fps: u32) -> VideoSettings {
         VideoSettings { height, fps }
+    }
+
+    #[test]
+    fn sounds_start_at_half_volume() {
+        assert_eq!(Settings::default().sound_volume, 50);
     }
 
     #[test]

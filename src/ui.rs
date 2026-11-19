@@ -41,6 +41,7 @@ pub const ID_ABOUT_CLOSE: i32 = 281;
 pub const ID_ABOUT_RECORDINGS: i32 = 282;
 pub const ID_ABOUT_LOGS: i32 = 283;
 pub const ID_ABOUT_GITHUB: i32 = 284;
+pub const ID_ABOUT_UPDATE: i32 = 287;
 pub const ID_SOURCE_CLOSE: i32 = 285;
 pub const ID_COPY_OUTPUT: i32 = 286;
 pub const ID_OPEN_OUTPUT: i32 = 292;
@@ -790,6 +791,25 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_recording(model.recording);
     ui.set_saving(model.saving);
     ui.set_about_open(model.about_open);
+    let (update_label, update_enabled, update_primary) = match model.update_state {
+        UpdateState::Idle | UpdateState::Checking => (tr("Update"), false, false),
+        UpdateState::Available => (tr("Update"), true, true),
+        UpdateState::Downloading(percent) => (
+            trf(
+                "Downloading {percent}%",
+                &[("percent", &percent.to_string())],
+            ),
+            false,
+            true,
+        ),
+        UpdateState::Installing => (tr("Installing…"), false, true),
+        UpdateState::UpToDate | UpdateState::Error | UpdateState::Unsupported => {
+            (tr("Update"), false, false)
+        }
+    };
+    ui.set_update_label(update_label.into());
+    ui.set_update_enabled(update_enabled);
+    ui.set_update_primary(update_primary);
     ui.set_source_open(model.source_open);
     ui.set_camera_open(model.camera_open);
     if model.camera_open {
@@ -881,6 +901,19 @@ fn device_names(devices: &[media::AudioDevice]) -> Vec<slint::SharedString> {
     names
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UpdateState {
+    #[default]
+    Idle,
+    Checking,
+    Available,
+    Downloading(u8),
+    Installing,
+    UpToDate,
+    Error,
+    Unsupported,
+}
+
 #[derive(Default)]
 struct Model {
     page: usize,
@@ -913,6 +946,7 @@ struct Model {
     scale_percent: u32,
     scale_setting: u32,
     about_open: bool,
+    update_state: UpdateState,
     source_open: bool,
     camera_open: bool,
     camera_items: Vec<String>,
@@ -981,6 +1015,10 @@ impl Controls {
 
     pub fn show_about(&self, open: bool) {
         self.update(|model| model.about_open = open);
+    }
+
+    pub fn set_update_state(&self, state: UpdateState) {
+        self.update(|model| model.update_state = state);
     }
 
     pub fn show_sources(&self, items: Vec<String>, monitors: usize) {

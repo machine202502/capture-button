@@ -347,10 +347,10 @@
     var assets = (release && release.assets) || [];
     var version = String((release && release.tag_name) || "").replace(/^v/, "");
     var setup = assets.find(function (asset) {
-      return /-setup\.exe$/i.test(asset.name);
+      return /-setup\.msi$/i.test(asset.name);
     });
     var zip = assets.find(function (asset) {
-      return /\.zip$/i.test(asset.name) && !/-setup\.exe$/i.test(asset.name);
+      return /\.zip$/i.test(asset.name) && !/-setup\.msi$/i.test(asset.name);
     });
 
     if (!version) {
@@ -371,7 +371,7 @@
       });
     } else {
       document.querySelectorAll("[data-dl-setup]").forEach(function (link) {
-        setFileName(link, "CaptureButton-windows-x64-setup.exe");
+        setFileName(link, "CaptureButton-windows-x64-setup.msi");
       });
     }
 

@@ -137,6 +137,7 @@ fn prepare_settings() {
         ("audio_microphone", 0),
         ("completion_sound", 0),
         ("screenshot_sound", 0),
+        ("sound_volume", 50),
     ] {
         set_test_dword(name, value);
     }

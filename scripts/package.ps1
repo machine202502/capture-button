@@ -1,5 +1,5 @@
 # Build the release exe, then write the portable zip and the installer into dist/.
-# Requires FFMPEG_DIR (static FFmpeg prefix) and Inno Setup 6 (ISCC.exe).
+# Requires FFMPEG_DIR (static FFmpeg prefix) and vpk with the .NET 8 SDK.
 param(
     [string]$Version
 )
@@ -268,28 +268,61 @@ Copy-Item $exe (Join-Path $stage "CaptureButton.exe")
 Copy-Item (Join-Path $Root "COPYING") (Join-Path $stage "COPYING")
 Copy-Item (Join-Path $Root "NOTICE") (Join-Path $stage "NOTICE")
 Copy-Item $thirdParty (Join-Path $stage "THIRD-PARTY.txt")
+Copy-Item (Join-Path $Root "locales") (Join-Path $stage "locales") -Recurse
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $portable
-Remove-Item $stage -Recurse -Force
 Write-Host "Portable: $portable"
 
-$iscc = @(
-    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if (-not $iscc) {
-    throw "Inno Setup 6 was not found. Install it so ISCC.exe can build the installer."
+$vpk = Get-Command vpk -ErrorAction SilentlyContinue
+if (-not $vpk) {
+    throw "vpk was not found. Install the .NET 8 SDK and run: dotnet tool install -g vpk"
 }
 
-$iss = Join-Path $Root "installer\CaptureButton.iss"
-& $iscc "/DAppVersion=$Version" "/DSourceExe=$exe" "/DThirdParty=$thirdParty" $iss
+$velopack = Join-Path $dist "velopack"
+if (Test-Path $velopack) {
+    Remove-Item $velopack -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $velopack | Out-Null
+
+& $vpk.Source pack `
+    --packId CaptureButtonApp `
+    --packVersion $Version `
+    --packDir $stage `
+    --runtime win-x64 `
+    --mainExe CaptureButton.exe `
+    --packTitle "Capture Button" `
+    --packAuthors "machine202502" `
+    --icon (Join-Path $Root "assets\CaptureButton.ico") `
+    --instLocation PerUser `
+    --msi `
+    --msiDialogBackground (Join-Path $Root "installer\msi-background.bmp") `
+    --instWelcome (Join-Path $Root "installer\welcome.txt") `
+    --outputDir $velopack
 if ($LASTEXITCODE -ne 0) {
-    throw "ISCC failed"
+    throw "vpk pack failed"
 }
 
-$setup = Join-Path $dist "CaptureButton-$Version-windows-x64-setup.exe"
-if (-not (Test-Path $setup)) {
-    throw "Installer was not produced: $setup"
+$velopackMsi = Get-ChildItem -Path $velopack -Filter "*.msi" | Select-Object -First 1
+if (-not $velopackMsi) {
+    throw "Velopack MSI installer was not produced in $velopack"
 }
+$setup = Join-Path $dist "CaptureButton-$Version-windows-x64-setup.msi"
+Copy-Item $velopackMsi.FullName $setup -Force
+$oldSetup = Join-Path $dist "CaptureButton-$Version-windows-x64-setup.exe"
+if (Test-Path $oldSetup) {
+    Remove-Item $oldSetup -Force
+}
+
+$feed = Join-Path $velopack "releases.win.json"
+if (-not (Test-Path $feed)) {
+    throw "Velopack feed was not produced: $feed"
+}
+$siteUpdates = Join-Path $Root "site\updates"
+New-Item -ItemType Directory -Force -Path $siteUpdates | Out-Null
+Get-ChildItem -Path $siteUpdates -Filter "*.nupkg" -ErrorAction SilentlyContinue | Remove-Item -Force
+Copy-Item $feed (Join-Path $siteUpdates "releases.win.json") -Force
+Get-ChildItem -Path $velopack -Filter "*.nupkg" | Copy-Item -Destination $siteUpdates -Force
+
+Remove-Item $stage -Recurse -Force
 Write-Host "Installer: $setup"
+Write-Host "Feed: $(Join-Path $siteUpdates 'releases.win.json')"
 }

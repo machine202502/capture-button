@@ -24,30 +24,35 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $portable = Join-Path $Root "dist\CaptureButton-$Version-windows-x64.zip"
-$setup = Join-Path $Root "dist\CaptureButton-$Version-windows-x64-setup.exe"
-foreach ($path in @($portable, $setup)) {
+$setup = Join-Path $Root "dist\CaptureButton-$Version-windows-x64-setup.msi"
+$feed = Join-Path $Root "dist\velopack\releases.win.json"
+$packages = @(Get-ChildItem -Path (Join-Path $Root "dist\velopack") -Filter "*.nupkg" -ErrorAction SilentlyContinue | ForEach-Object FullName)
+foreach ($path in @($portable, $setup, $feed)) {
     if (-not (Test-Path $path)) {
         throw "Missing release file: $path"
     }
+}
+if ($packages.Count -eq 0) {
+    throw "No Velopack packages were produced"
 }
 
 $notes = @"
 Windows x64.
 
 - ``CaptureButton-$Version-windows-x64.zip`` is portable. Unzip it and run ``CaptureButton.exe``.
-- ``CaptureButton-$Version-windows-x64-setup.exe`` installs Capture Button for all users.
+- ``CaptureButton-$Version-windows-x64-setup.msi`` installs Capture Button for the current user (no administrator prompt).
+- The installer and the ``releases.win.json`` / ``*.nupkg`` assets are used by the built-in updater. Existing 0.3.x installations need this version once manually; later versions update from the About window.
 
 The executable includes FFmpeg and x264 under the GNU GPL v2 or later, Phosphor Icons under the MIT License, and the other libraries and Rust crates named in the notices. ``COPYING``, ``NOTICE``, and ``THIRD-PARTY.txt`` in the zip and the install folder carry those terms and where to get the source.
 Capture Button source for this tag: https://github.com/machine202502/capture-button/tree/$Tag
 "@
 
+$assets = @($portable, $setup, $feed) + $packages
 $ghArgs = @(
     "release", "create", $Tag,
     "--title", "Capture Button $Version",
-    "--notes", $notes,
-    $portable,
-    $setup
-)
+    "--notes", $notes
+) + $assets
 if ($Draft) {
     $ghArgs += "--draft"
 }

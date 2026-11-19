@@ -1,4 +1,4 @@
-﻿name: Site
+name: Site
 
 on:
   push:
@@ -77,7 +77,15 @@ jobs:
             echo "$name $size MB $hash"
           }
           fill_asset 'windows-x64.zip' zip
-          fill_asset '-setup.exe' setup
+          fill_asset '-setup.msi' setup
+
+          mkdir -p "$GITHUB_WORKSPACE/site/updates"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'releases.win.json' \
+            --dir "$GITHUB_WORKSPACE/site/updates" --clobber
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.nupkg' \
+            --dir "$GITHUB_WORKSPACE/site/updates" --clobber
 
       - name: Fill release data into the site
         if: steps.release.outputs.version != ''

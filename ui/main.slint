@@ -1,4 +1,4 @@
-﻿import { ScrollView, ComboBox } from "std-widgets.slint";
+import { ScrollView, ComboBox } from "std-widgets.slint";
 
 global Palette {
     out property <color> deep: #03141e;
@@ -7,6 +7,8 @@ global Palette {
     out property <color> accent-hover: #128aa5;
     out property <color> accent-soft: #cffafe;
     out property <color> cyan: #67e8f9;
+    out property <color> success: #16a34a;
+    out property <color> success-hover: #15803d;
     out property <color> bg: #f0f9fb;
     out property <color> card: #ffffff;
     out property <color> line: #d2e7ec;
@@ -111,18 +113,19 @@ component SectionTitle inherits Text {
 component OceanButton inherits Rectangle {
     in property <string> label;
     in property <bool> primary: false;
+    in property <bool> success: false;
     in property <bool> enabled: true;
     callback clicked;
 
     height: 34px;
     border-radius: 10px;
-    background: !root.enabled ? Palette.disabled : (root.primary ? (ta.has-hover ? Palette.accent-hover : Palette.accent) : (ta.has-hover ? Palette.hover : Palette.card));
-    border-width: root.primary ? 0px : 1px;
+    background: !root.enabled ? Palette.disabled : (ta.has-hover ? (root.success ? Palette.success-hover : (root.primary ? Palette.accent-hover : Palette.hover)) : (root.success ? Palette.success : (root.primary ? Palette.accent : Palette.card)));
+    border-width: root.primary || root.success ? 0px : 1px;
     border-color: Palette.line;
 
     Text {
         text: root.label;
-        color: root.primary ? Palette.on-accent : (root.enabled ? Palette.ink : #ffffff);
+        color: (root.primary || root.success) ? Palette.on-accent : (root.enabled ? Palette.ink : #ffffff);
         font-size: 12px;
         font-weight: 600;
         horizontal-alignment: center;
@@ -390,7 +393,7 @@ export component MainWindow inherits Window {
     in-out property <bool> tray-capture: false;
     in-out property <bool> highlight: true;
     in-out property <bool> sound: true;
-    in-out property <int> sound-volume: 100;
+    in-out property <int> sound-volume: 50;
     in-out property <bool> shot-sound: true;
     in-out property <bool> no-signal: true;
     in-out property <bool> show-card: true;
@@ -413,13 +416,16 @@ export component MainWindow inherits Window {
     in-out property <length> capture-scroll: 0px;
     in-out property <length> settings-scroll: 0px;
     in-out property <bool> about-open: false;
+    in-out property <string> update-label: "";
+    in-out property <bool> update-enabled: false;
+    in-out property <bool> update-primary: false;
     in-out property <bool> source-open: false;
     in-out property <bool> camera-open: false;
     in-out property <[string]> camera-items: [];
     in-out property <int> source-monitors: 0;
     in-out property <int> history-ack: -1;
     private property <length> triple: (root.width - 72px * ui-scale) / 3;
-    private property <length> about-triple: (480px * ui-scale - 48px * ui-scale) / 3;
+    private property <length> about-quad: (540px * ui-scale - 54px * ui-scale) / 4;
     private property <length> half: (root.width - 90px * ui-scale) / 2;
     in-out property <[string]> source-monitor-items: [];
     in-out property <[string]> source-window-items: [];
@@ -516,7 +522,7 @@ export component MainWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
 
                 OceanButton {
-                    width: 82px * ui-scale;
+                    width: 156px * ui-scale;
                     height: 28px * ui-scale;
                     label: Labels.refresh;
                     enabled: root.idle;
@@ -1034,8 +1040,8 @@ export component MainWindow inherits Window {
         }
 
         Rectangle {
-            width: 480px * ui-scale;
-            height: 280px * ui-scale;
+            width: 540px * ui-scale;
+            height: 300px * ui-scale;
             x: (root.width - self.width) / 2;
             y: (root.height - self.height) / 2;
             border-radius: 16px * ui-scale;
@@ -1073,9 +1079,16 @@ export component MainWindow inherits Window {
                 Rectangle { vertical-stretch: 1; }
                 HorizontalLayout {
                     spacing: 6px * ui-scale;
-                    OceanButton { width: root.about-triple; label: Labels.open_recordings; clicked => { root.act(282); } }
-                    OceanButton { width: root.about-triple; label: Labels.open_logs; clicked => { root.act(283); } }
-                    OceanButton { width: root.about-triple; label: Labels.github; clicked => { root.act(284); } }
+                    OceanButton { width: root.about-quad; label: Labels.open_recordings; clicked => { root.act(282); } }
+                    OceanButton { width: root.about-quad; label: Labels.open_logs; clicked => { root.act(283); } }
+                    OceanButton { width: root.about-quad; label: Labels.github; clicked => { root.act(284); } }
+                    OceanButton {
+                        width: root.about-quad;
+                        label: root.update-label;
+                        success: root.update-primary;
+                        enabled: root.update-enabled;
+                        clicked => { root.act(287); }
+                    }
                 }
             }
         }

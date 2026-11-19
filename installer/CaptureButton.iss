@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.4"
+  #define AppVersion "0.4.1"
 #endif
 #ifndef SourceExe
   #define SourceExe "..\target\release\CaptureButton.exe"

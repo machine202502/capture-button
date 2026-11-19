@@ -7,7 +7,8 @@ The source in this repository is under the MIT license. A release build statical
 ## Interface language
 
 English is compiled into the executable, so the program is fully usable with no
-locale files at all: the portable zip ships only that built-in English.
+locale files at all. The portable zip and the installer also ship the three
+catalogs.
 
 Russian and Simplified Chinese are plain JSON catalogs in the `locales/` folder
 next to `CaptureButton.exe`; the installer ships `ru.json`, `en.json` and `zh.json`.
@@ -28,7 +29,32 @@ cargo build --release --bin CaptureButton
 
 The executable is `target\release\CaptureButton.exe`. Icons, the no-signal card, and the completion sound are compiled into it.
 
-`scripts\package.ps1` builds that executable, then writes a portable zip and an Inno Setup installer into `dist\`. The installer needs Inno Setup 6. Pushing a new `version` in `Cargo.toml` to `master` runs the same packaging on GitHub and publishes the files when that version has no release yet.
+`scripts\package.ps1` builds that executable, then writes a portable zip, a
+per-user MSI installer (with the standard Windows Installer wizard) and the
+update feed into `dist\` (and `site\updates\`). Packaging needs the .NET 8 SDK
+and the `vpk` tool:
+
+```powershell
+dotnet tool install -g vpk
+```
+
+Pushing a new `version` in `Cargo.toml` to `master` runs the same packaging on
+GitHub and publishes the files when that version has no release yet.
+
+## Updates
+
+The installed app checks `https://machine202502.github.io/capture-button/updates`
+when **About** opens. If a newer version is published, the update button turns
+green; pressing it downloads the Velopack package and restarts the app. Portable
+builds update manually.
+
+The feed and its `.nupkg` packages are copied from the GitHub release into the
+site by `.github/workflows/site.yml`. Existing Inno Setup 0.3.x installs must
+install 0.4.1 once by hand; later versions update from the About window.
+
+0.4.x is an MSI. Uninstall it through **Settings → Apps** (or `msiexec /x` on
+the MSI). Do not delete the install folder and do not use
+`Update.exe --uninstall`: Velopack rejects that command for MSI installs.
 
 ## Test
 

@@ -13,6 +13,7 @@ mod region;
 mod settings;
 mod theme;
 mod ui;
+mod update;
 
 use crate::i18n::{tr, trf};
 pub(crate) use media::AudioSettings;
@@ -165,6 +166,7 @@ fn accepts_command(mode: Mode, id: i32, region_open: bool) -> bool {
                 | ui::ID_ABOUT_RECORDINGS
                 | ui::ID_ABOUT_LOGS
                 | ui::ID_ABOUT_GITHUB
+                | ui::ID_ABOUT_UPDATE
                 | ui::ID_COPY_OUTPUT
                 | ui::ID_OPEN_OUTPUT
                 | ui::ID_SOURCE_CLOSE
@@ -753,7 +755,11 @@ impl App {
         }
         match id {
             ID_REFRESH => self.controls.refresh_all_devices(&mut self.settings),
-            ID_ABOUT => self.controls.show_about(true),
+            ID_ABOUT => {
+                self.controls.show_about(true);
+                update::check(self.controls.clone());
+            }
+            ui::ID_ABOUT_UPDATE => update::install(self.controls.clone()),
             ui::ID_ABOUT_CLOSE => self.controls.show_about(false),
             ui::ID_ABOUT_RECORDINGS => {
                 if let Ok(path) = media::output_dir() {
@@ -2244,6 +2250,7 @@ fn trim_working_set() {
 }
 
 fn main() {
+    update::init();
     unsafe {
         // SAFETY: The window handle belongs to this program. The message carries no borrowed pointer.
 
