@@ -1,31 +1,34 @@
-<!DOCTYPE html>
-<html lang="en" data-size-unit="MB">
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Capture Button — screen recording and screenshots for Windows</title>
-  <meta name="description" content="Capture Button records the screen, a window, a region or a camera, takes screenshots, and builds short GIF and WebP clips. A free app for Windows 10 and 11, with no account.">
-  <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#041018">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title data-key="meta.title">Capture Button — screen recording, screenshots, sound for Windows. Free.</title>
+  <meta name="description" data-content-key="meta.description" content="Capture Button — a free Windows screen recorder: screen, window or region to MKV, PNG screenshots, short GIF and WebP clips, system sound and microphone. No account or cloud.">
+  <meta name="theme-color" content="#070812">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" data-content-key="og.title" content="Capture Button — capture, record, done">
+  <meta property="og:description" data-content-key="og.description" content="Screen and sound recording, annotated screenshots, GIF and WebP. Free and open source.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://machine202502.github.io/capture-button/en/">
+  <meta property="og:image" content="https://machine202502.github.io/capture-button/assets/img/icon-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:site_name" content="Capture Button">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" data-content-key="og.title" content="Capture Button — capture, record, done">
+  <meta name="twitter:description" data-content-key="og.description" content="Screen and sound recording, annotated screenshots, GIF and WebP. Free and open source.">
+  <meta name="twitter:image" content="https://machine202502.github.io/capture-button/assets/img/icon-512.png">
   <link rel="canonical" href="https://machine202502.github.io/capture-button/en/">
   <link rel="alternate" hreflang="ru" href="https://machine202502.github.io/capture-button/">
   <link rel="alternate" hreflang="en" href="https://machine202502.github.io/capture-button/en/">
   <link rel="alternate" hreflang="zh" href="https://machine202502.github.io/capture-button/zh/">
   <link rel="alternate" hreflang="x-default" href="https://machine202502.github.io/capture-button/en/">
-  <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Capture Button">
-  <meta property="og:locale" content="en_US">
-  <meta property="og:locale:alternate" content="ru_RU">
-  <meta property="og:locale:alternate" content="zh_CN">
-  <meta property="og:title" content="Capture Button — screen recording and screenshots for Windows">
-  <meta property="og:description" content="Record the screen, a window or a region. Take screenshots and short GIF and WebP clips. Free for Windows 10 and 11.">
-  <meta property="og:url" content="https://machine202502.github.io/capture-button/en/">
-  <meta property="og:image" content="https://machine202502.github.io/capture-button/assets/icon.png">
-  <meta property="og:image:alt" content="Capture Button icon">
-  <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Capture Button — screen recording and screenshots for Windows">
-  <meta name="twitter:description" content="Record the screen, a window or a region. Take screenshots and short GIF and WebP clips. Free for Windows 10 and 11.">
-  <meta name="twitter:image" content="https://machine202502.github.io/capture-button/assets/icon.png">
+  <link rel="icon" type="image/png" href="../assets/img/icon.png">
+  <link rel="apple-touch-icon" href="../assets/img/icon-512.png">
+  <link rel="preload" as="image" href="../assets/img/screen-record.webp" type="image/webp" fetchpriority="high">
+  <link rel="stylesheet" href="../assets/css/style.css?v=35">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -37,548 +40,424 @@
     "url": "https://machine202502.github.io/capture-button/en/",
     "downloadUrl": "https://github.com/machine202502/capture-button/releases/latest",
     "license": "https://github.com/machine202502/capture-button/blob/master/LICENSE",
-    "description": "Screen, window, region and camera recording, plus screenshots and short GIF and WebP clips for Windows.",
-    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    "description": "Screen, window or region recording to MKV, PNG screenshots and short GIF and WebP clips for Windows.",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
   }
   </script>
-  <link rel="icon" type="image/png" href="../assets/icon.png">
-  <link rel="apple-touch-icon" href="../assets/icon.png">
-  <link rel="stylesheet" href="../styles.css">
-  <script>
-    (function () {
-      var chosen = null;
-      try { chosen = localStorage.getItem("capture-button-lang"); } catch (e) {}
-      var codes = ["ru", "en", "zh"];
-      var here = document.documentElement.lang.slice(0, 2);
-      var base = here === "ru" ? "" : "../";
-      var want = codes.indexOf(chosen) >= 0 ? chosen : null;
-      if (!want) {
-        var langs = navigator.languages || [navigator.language || "en"];
-        for (var i = 0; i < langs.length && !want; i++) {
-          var tag = String(langs[i]).toLowerCase();
-          for (var j = 0; j < codes.length; j++) {
-            if (tag.indexOf(codes[j]) === 0) { want = codes[j]; break; }
-          }
-        }
-        if (!want) { want = "en"; }
-      }
-      var bot = /bot|crawl|spider|slurp|facebookexternalhit|preview/i.test(navigator.userAgent);
-      if (!bot && want !== here) { location.replace(base + (want === "ru" ? "" : want + "/")); }
-    })();
-  </script>
+  <noscript>
+    <style>
+      .reveal { opacity: 1; transform: none; filter: none; }
+      .hero-intro { animation: none; }
+      .cta-fog { display: none; }
+    </style>
+  </noscript>
 </head>
 <body>
+  <div class="bg" aria-hidden="true">
+    <canvas id="shader"></canvas>
+    <div class="grain"></div>
+  </div>
+  <div class="shutter-flash" aria-hidden="true"></div>
 
-  <a class="skip-link" href="#main">Skip to content</a>
-  <canvas id="ocean" aria-hidden="true"></canvas>
-  <div class="page-veil" aria-hidden="true"></div>
-  <div class="page-grain" aria-hidden="true"></div>
-
-  <header class="site-header" data-header>
-    <div class="header-inner wrap">
-      <a class="brand" href="#top" aria-label="Capture Button — home">
-        <img src="../assets/icon.png" alt="" width="40" height="40">
-        <span class="brand-copy">
-          <span class="brand-name">Capture Button</span>
-          <span class="brand-sub">screen · region · sound</span>
-        </span>
-      </a>
-
-      <nav class="main-nav" aria-label="Main navigation">
-        <a href="#features">Features</a>
-        <a href="#formats">Formats</a>
-        <a href="#screens">Interface</a>
-        <a href="#download">Download</a>
-      </nav>
-
-      <div class="header-tools">
-        <nav class="langs" aria-label="Language">
-          <a href="../" hreflang="ru" lang="ru" data-lang-set="ru">RU</a>
-          <a href="./" hreflang="en" lang="en" data-lang-set="en" aria-current="true">EN</a>
-          <a href="../zh/" hreflang="zh" lang="zh" data-lang-set="zh">中文</a>
-        </nav>
-        <a class="gh-link" href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener">
-          <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-          <span>GitHub</span>
-        </a>
+  <header class="nav" id="nav">
+    <a class="brand" href="#top" aria-label="Capture Button">
+      <img class="brand-icon" src="../assets/img/icon.png" alt="" width="34" height="34" aria-hidden="true">
+      <span class="brand-name">Capture Button</span>
+    </a>
+    <nav class="nav-links" aria-label="Main navigation" data-aria-key="nav.aria">
+      <a href="#capture" data-key="nav.capture">Capture</a>
+      <a href="#record" data-key="nav.record">Recording</a>
+      <a href="#convert" data-key="nav.formats">Formats</a>
+      <a href="#why" data-key="nav.why">Why Capture Button</a>
+    </nav>
+    <div class="nav-actions">
+      <div class="lang-switch" role="group" aria-label="Language" data-aria-key="lang.label">
+        <a class="lang-btn" href="../" hreflang="ru" lang="ru" data-lang="ru">RU</a>
+        <a class="lang-btn active" href="./" hreflang="en" lang="en" data-lang="en" aria-current="page">EN</a>
+        <a class="lang-btn" href="../zh/" hreflang="zh" lang="zh" data-lang="zh">中文</a>
       </div>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener">GitHub ↗</a>
     </div>
   </header>
 
-  <main id="main">
-
-    <section class="hero" id="top" aria-labelledby="hero-title">
-      <div class="hero-grid wrap">
-        <div class="hero-copy">
-          <p class="status-pill">
-            <span class="pulse-dot" aria-hidden="true"></span>
-            Windows 10 / 11 <span class="sep" aria-hidden="true">·</span> 64-bit
-          </p>
-
-          <h1 class="display" id="hero-title">
-            Press.<br>
-            Capture.<br>
-            <span class="display-glow">Done.</span>
-          </h1>
-
-          <p class="lead">
-            <strong>Capture Button</strong> records the screen, a window or a region, takes
-            screenshots, and builds short GIF and WebP clips. System sound, microphone and a
-            region editor — all on one button.
-          </p>
-
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.msi" data-dl-setup>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-              Download installer
-            </a>
-            <a class="btn btn-ghost" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64.zip" data-dl-zip>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="m3 8 2.5-4h13L21 8"/><path d="M3 8h18M10 12h4"/></svg>
-              Portable (.zip)
-            </a>
-          </div>
-
-          <p class="hero-links">
-            <a href="https://github.com/machine202502/capture-button/releases" target="_blank" rel="noopener">All releases <span aria-hidden="true">↗</span></a>
-            <span class="dot" aria-hidden="true">·</span>
-            <span>Windows 10/11, 64-bit</span>
-          </p>
-          <p class="micro">Free · source under MIT · the app includes FFmpeg and x264 and is distributed under GPL · no account and no cloud</p>
-        </div>
-
-        <div class="hero-visual">
-          <div class="orbit orbit-1" aria-hidden="true"></div>
-          <div class="orbit orbit-2" aria-hidden="true"></div>
-          <div class="capture-badge" aria-hidden="true"></div>
-
-          <figure class="hero-frame">
-            <button class="frame-btn" type="button" aria-label="Open a screenshot of the Capture Button main screen">
-              <img src="../assets/capture.png" alt="Capture Button main screen: MKV format, 2160p resolution, 60 FPS and audio sources" width="1124" height="1100" fetchpriority="high" decoding="async">
-            </button>
-            <figcaption>Part of the main screen. <span>Click to enlarge.</span></figcaption>
-          </figure>
-
-          <div class="float-chip chip-one" aria-hidden="true">
-            <span class="chip-k">MKV</span>
-            <span class="chip-v">up to 2160p · 60 FPS</span>
-          </div>
-          <div class="float-chip chip-two" aria-hidden="true">
-            <span class="chip-k">GIF · WebP</span>
-            <span class="chip-v">for chat and articles</span>
-          </div>
-          <div class="float-chip chip-three" aria-hidden="true">
-            <span class="chip-k">PNG</span>
-            <span class="chip-v">screenshots</span>
+  <main id="top">
+    <section class="hero">
+      <div class="hero-shapes" aria-hidden="true">
+        <div class="shape shape-orb"></div>
+        <div class="shape shape-cam">
+          <div class="cam-bloom" aria-hidden="true"></div>
+          <div class="cam3d" aria-hidden="true">
+            <div class="cam-body">
+              <span class="cam-face b-front"></span>
+              <span class="cam-face b-back"></span>
+              <span class="cam-face b-left"></span>
+              <span class="cam-face b-right"></span>
+              <span class="cam-face b-top"></span>
+              <span class="cam-face b-bottom"></span>
+              <span class="cam-face cam-rec"></span>
+            </div>
+            <div class="cam-lens">
+              <span class="cam-face l-front"></span>
+              <span class="cam-face l-back"></span>
+              <span class="cam-face l-left"></span>
+              <span class="cam-face l-right"></span>
+              <span class="cam-face l-top"></span>
+              <span class="cam-face l-bottom"></span>
+            </div>
+            <div class="cam-vf">
+              <span class="cam-face v-front"></span>
+              <span class="cam-face v-back"></span>
+              <span class="cam-face v-left"></span>
+              <span class="cam-face v-right"></span>
+              <span class="cam-face v-top"></span>
+              <span class="cam-face v-bottom"></span>
+            </div>
           </div>
         </div>
       </div>
 
-      <a class="scroll-cue" href="#features">
-        <span>Scroll</span>
-        <i aria-hidden="true"></i>
+      <div class="hero-inner">
+        <p class="eyebrow hero-intro" data-delay="0" data-key="hero.eyebrow">Free · Open source · Windows</p>
+        <h1 class="hero-title">
+          <span class="line hero-intro" data-delay="80" data-key="hero.line1">Capture. Record.</span>
+          <span class="line gradient-text hero-intro" data-delay="160" data-key="hero.line2" data-scramble>Done.</span>
+        </h1>
+        <p class="hero-sub hero-intro" data-delay="240" data-key="hero.sub">Capture Button records the screen, a window or a region to MKV, takes PNG screenshots and short GIF and WebP clips. System sound, microphone and a region editor — all on one button.</p>
+        <div class="hero-cta hero-intro" data-delay="320">
+          <a class="btn btn-primary magnetic" href="#capture" data-key="hero.cta.primary">See what it can do</a>
+          <a class="btn btn-ghost magnetic" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.msi" target="_blank" rel="noopener" data-key="hero.cta.ghost">Download free ↗</a>
+        </div>
+        <div class="hero-stats hero-intro" data-delay="400">
+          <div class="stat">
+            <strong data-key="stat.free.value">Free</strong>
+            <span data-key="stat.free.label">forever</span>
+          </div>
+          <div class="stat">
+            <strong><span data-count="2160">0</span><span data-key="stat.res.unit">p</span></strong>
+            <span data-key="stat.res.label">resolution</span>
+          </div>
+          <div class="stat">
+            <strong><span data-count="60">0</span><span data-key="stat.fps.unit"> fps</span></strong>
+            <span data-key="stat.fps.label">recording</span>
+          </div>
+          <div class="stat">
+            <strong data-key="stat.os.value">Windows</strong>
+            <span data-key="stat.os.label">supported</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-visual">
+        <div class="device tilt">
+          <div class="device-bar">
+            <span class="dot dot-r"></span>
+            <span class="dot dot-y"></span>
+            <span class="dot dot-g"></span>
+            <span class="device-title" data-key="hero.device.title">Capture Button — Recording</span>
+          </div>
+          <div class="device-screen">
+            <picture class="media-picture">
+              <source srcset="../assets/img/screen-record.webp" type="image/webp">
+              <img class="crt-fallback" src="../assets/img/screen-record.png" width="1124" height="900" alt="Capture Button window: recording format, preset, resolution and frame rate" data-alt-key="alt.record" loading="eager" fetchpriority="high" decoding="async">
+            </source></picture>
+            <canvas class="crt-canvas" aria-hidden="true"></canvas>
+            <div class="rec-badge">
+              <span class="rec-dot"></span>
+              <span class="rec-label">REC</span>
+              <span class="rec-time" id="recTime">00:00</span>
+            </div>
+          </div>
+        </div>
+        <div class="float-chip chip-1" data-float="1">
+          <span class="chip-badge" aria-hidden="true">
+            <svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="12" height="12" rx="2"></rect><path d="M15 10l5-3v10l-5-3"></path></svg>
+          </span>
+          <span class="chip-copy"><b>MKV · 2160p</b><small data-key="hero.chip1.label">60 FPS</small></span>
+        </div>
+        <div class="float-chip chip-2" data-float="2">
+          <span class="chip-badge" aria-hidden="true">
+            <svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><path d="M4 18l5-5 4 4 3-3 4 4"></path></svg>
+          </span>
+          <span class="chip-copy"><b>GIF · WebP</b><small data-key="hero.chip2.label">loop</small></span>
+        </div>
+        <div class="float-chip chip-3" data-float="3">
+          <span class="chip-badge" aria-hidden="true">
+            <svg viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"></path></svg>
+          </span>
+          <span class="chip-copy"><b data-key="hero.chip3">Microphone + system sound</b><small data-key="hero.chip3.label">sound</small></span>
+        </div>
+      </div>
+
+      <a class="scroll-hint" href="#capture" aria-label="Scroll down" data-aria-key="scroll.down">
+        <span class="mouse"><span class="wheel"></span></span>
       </a>
     </section>
 
-    <section class="section" id="features" aria-labelledby="features-title">
-      <div class="wrap">
-        <header class="section-head reveal">
-          <p class="eyebrow"><span>01</span> Features</p>
-          <h2 id="features-title">One button.<br><span class="dim">Six reasons to press it.</span></h2>
-          <p class="section-sub">Recording, screenshots, sound and region markup. No heavy editor, no extra windows.</p>
-        </header>
+    <section class="section pillars" id="capture">
+      <header class="section-head reveal">
+        <p class="kicker" data-key="cap.kicker">Three moves and done</p>
+        <h2 data-key="cap.h2">All the magic is in three buttons</h2>
+        <p class="lede" data-key="cap.lede">No half-screen timelines and no hundreds of settings. Select a region, take a screenshot or record, and the file is yours.</p>
+      </header>
 
-        <div class="bento">
-          <article class="feature glass-card span-7 reveal">
-            <div class="feature-top">
-              <span class="feature-icon">
-                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/><circle cx="12" cy="11" r="3"/></svg>
-              </span>
-              <span class="feature-num">01</span>
-            </div>
-            <h3>Screen and camera recording</h3>
-            <p>The whole screen, one window or a selected region. MKV, up to 2160p and 60 FPS; the mouse cursor can be shown or hidden. Camera photo and video are included.</p>
-            <div class="feature-tags">
-              <span class="tag">MKV</span>
-              <span class="tag">up to 2160p</span>
-              <span class="tag">60 FPS</span>
-              <span class="tag">Camera</span>
-            </div>
-          </article>
-
-          <article class="feature glass-card span-5 reveal">
-            <div class="feature-top">
-              <span class="feature-icon">
-                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
-              </span>
-              <span class="feature-num">02</span>
-            </div>
-            <h3>Screenshots</h3>
-            <p>The screen, a source or a region — saved as PNG with one press. Copy the file straight away or open its folder.</p>
-            <div class="feature-tags">
-              <span class="tag">PNG</span>
-              <span class="tag">Screen</span>
-              <span class="tag">Region</span>
-            </div>
-          </article>
-
-          <article class="feature glass-card span-4 reveal">
-            <div class="feature-top">
-              <span class="feature-icon">
-                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m10 9 5 3-5 3V9Z" fill="currentColor" stroke="none"/></svg>
-              </span>
-              <span class="feature-num">03</span>
-            </div>
-            <h3>GIF and WebP</h3>
-            <p>A short animation for a chat, an article or a bug report. Presets and a frame-rate control.</p>
-            <div class="feature-tags">
-              <span class="tag">GIF</span>
-              <span class="tag">WebP</span>
-              <span class="tag">Loop</span>
-            </div>
-          </article>
-
-          <article class="feature glass-card span-4 reveal">
-            <div class="feature-top">
-              <span class="feature-icon">
-                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>
-              </span>
-              <span class="feature-num">04</span>
-            </div>
-            <h3>Sound</h3>
-            <p>System sound and the microphone together, with a separate mic level. Audio only is fine too.</p>
-            <div class="feature-tags">
-              <span class="tag">System</span>
-              <span class="tag">Microphone</span>
-              <span class="tag">MP3</span>
-            </div>
-          </article>
-
-          <article class="feature glass-card span-4 reveal">
-            <div class="feature-top">
-              <span class="feature-icon">
-                <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 21 4-1 11-11a2.1 2.1 0 0 0-3-3L4 17l-1 4Z"/><path d="m13.5 6.5 3 3"/></svg>
-              </span>
-              <span class="feature-num">05</span>
-            </div>
-            <h3>Region editor</h3>
-            <p>Draw an arrow, add text, crop or cover something right on the selection. Save it, copy it or start recording.</p>
-            <div class="feature-tags">
-              <span class="tag">Annotations</span>
-              <span class="tag">Redaction</span>
-            </div>
-          </article>
-
-          <article class="feature feature--wide glass-card span-12 reveal">
-            <div class="feature-wide-copy">
-              <div class="feature-top">
-                <span class="feature-icon">
-                  <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14v18l-7-5-7 5V3Z"/></svg>
-                </span>
-                <span class="feature-num">06</span>
-              </div>
-              <h3>Lives in the tray</h3>
-              <p>Click the icon and capture starts. Recent files are at hand: open, copy or show in the folder.</p>
-              <div class="feature-tags">
-                <span class="tag">Tray</span>
-                <span class="tag">History</span>
-                <span class="tag">Clipboard</span>
-              </div>
-            </div>
-            <div class="tray-motif" aria-hidden="true">
-              <div class="tray-row">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9"/><path d="M18 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></svg>
-                <span class="tray-line"></span>
-                <span class="tray-action">open</span>
-              </div>
-              <div class="tray-row">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-                <span class="tray-line"></span>
-                <span class="tray-action">copy</span>
-              </div>
-              <div class="tray-row">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
-                <span class="tray-line"></span>
-                <span class="tray-action">folder</span>
-              </div>
-            </div>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <section class="manifesto" aria-labelledby="manifesto-title">
-      <div class="wrap manifesto-inner">
-        <h2 class="manifesto-title reveal" id="manifesto-title">Local.<br><span>No account.</span><br>No cloud.</h2>
-        <p class="manifesto-note reveal">Capture Button writes files straight to disk. No subscriptions, no profiles and no uploads to a server — just the capture and the finished file.</p>
-      </div>
-    </section>
-
-    <section class="section" id="formats" aria-labelledby="formats-title">
-      <div class="wrap">
-        <header class="section-head section-head--split reveal">
-          <div>
-            <p class="eyebrow"><span>02</span> Formats</p>
-            <h2 id="formats-title">One capture.<br><span class="dim">Three formats.</span></h2>
+      <div class="pillar-grid">
+        <article class="pillar reveal" data-tilt>
+          <div class="pillar-shot">
+            <picture class="media-picture">
+              <source srcset="../assets/img/region-overlay.webp" type="image/webp">
+              <img src="../assets/img/region-overlay.png" width="1018" height="768" alt="Region selection: frame with dimensions and toolbar" data-alt-key="alt.capture" loading="lazy" fetchpriority="low" decoding="async">
+            </source></picture>
           </div>
-          <p class="section-sub">Pick the format for the job: full video, a loop for chat or a compact animation for the web.</p>
-        </header>
-
-        <div class="format-grid">
-          <article class="format-card glass-card reveal">
-            <div class="format-top">
-              <span class="format-kicker">Video</span>
-              <span class="format-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
-            </div>
-            <h3 class="format-name">MKV</h3>
-            <p class="format-sub">Full quality</p>
-            <p>H.264 video and sound. Up to 2160p and 60 FPS — for tutorials, demos and bug reports.</p>
-            <div class="format-tags">
-              <span class="tag">H.264</span>
-              <span class="tag">up to 60 FPS</span>
-            </div>
-          </article>
-
-          <article class="format-card glass-card reveal">
-            <div class="format-top">
-              <span class="format-kicker">Loop</span>
-              <span class="format-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
-            </div>
-            <h3 class="format-name">GIF</h3>
-            <p class="format-sub">A loop for chat</p>
-            <p>A short animation that opens anywhere. Presets and a frame-rate control.</p>
-            <div class="format-tags">
-              <span class="tag">Loop</span>
-              <span class="tag">Presets</span>
-            </div>
-          </article>
-
-          <article class="format-card glass-card reveal">
-            <div class="format-top">
-              <span class="format-kicker">Web</span>
-              <span class="format-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
-            </div>
-            <h3 class="format-name">WebP</h3>
-            <p class="format-sub">Compact animation</p>
-            <p>For articles and documentation: the same short fragment in a modern format.</p>
-            <div class="format-tags">
-              <span class="tag">Animation</span>
-              <span class="tag">Web</span>
-            </div>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="screens" aria-labelledby="screens-title">
-      <div class="wrap">
-        <header class="section-head reveal">
-          <p class="eyebrow"><span>03</span> Interface</p>
-          <h2 id="screens-title">Nothing in the way.</h2>
-          <p class="section-sub">One screen: format, resolution, frame rate and sound. Settings sit on the second tab; the tray is always at hand.</p>
-        </header>
-
-        <div class="gallery">
-          <figure class="shot shot--main reveal">
-            <button class="shot-btn" type="button" aria-label="Open a screenshot of the Capture Button main screen">
-              <img src="../assets/capture-controls.png" alt="Capture Button main screen with format, resolution, frame rate and audio source controls" width="1124" height="1000" loading="lazy" decoding="async">
-            </button>
-            <figcaption>
-              <span class="cap-index">01</span>
-              <span class="cap-text">Main screen: format, resolution, FPS and audio sources.</span>
-              <span class="cap-open">Open</span>
-            </figcaption>
-          </figure>
-
-          <figure class="shot shot--about reveal">
-            <button class="shot-btn" type="button" aria-label="Open a screenshot of the About window">
-              <img src="../assets/about.png" alt="Capture Button About window with the version and license notices for FFmpeg, x264 and Phosphor Icons" width="1124" height="1000" loading="lazy" decoding="async">
-            </button>
-            <figcaption>
-              <span class="cap-index">02</span>
-              <span class="cap-text">About: version and the FFmpeg, x264 and Phosphor Icons notices.</span>
-              <span class="cap-open">Open</span>
-            </figcaption>
-          </figure>
-
-          <figure class="shot shot--region reveal">
-            <button class="shot-btn" type="button" aria-label="Open a screenshot of region selection">
-              <img src="../assets/region.png" alt="Region selection overlay with a frame, toolbar, arrow and resize handles" width="1366" height="768" loading="lazy" decoding="async">
-            </button>
-            <figcaption>
-              <span class="cap-index">03</span>
-              <span class="cap-text">Region selection: frame, toolbar, arrows and text.</span>
-              <span class="cap-open">Open</span>
-            </figcaption>
-          </figure>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="download" aria-labelledby="download-title">
-      <div class="wrap">
-        <header class="section-head reveal">
-          <p class="eyebrow"><span>04</span> Download</p>
-          <h2 id="download-title">Download Capture Button</h2>
-          <p class="section-sub">Windows 10/11, 64-bit. Installer or a portable archive with CaptureButton.exe. Both are built from the source; SHA-256 helps you check the download.</p>
-        </header>
-
-        <div class="download-layout">
-          <div class="dl-stack">
-            <article class="dl-card glass-card reveal">
-              <div class="dl-head">
-                <span class="dl-icon">
-                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-                </span>
-                <div>
-                  <h3>Installer</h3>
-                  <p class="dl-desc">A per-user install without administrator rights. CaptureButton.exe and the license texts are inside.</p>
-                </div>
-                <span class="dl-tag">EXE</span>
-              </div>
-              <a class="dl-btn dl-btn--primary" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.msi" data-dl-setup data-fallback="Download installer · Windows x64">
-                <span class="dl-file">CaptureButton<span data-version>-@@VERSION@@-</span>windows-x64-setup.msi</span>
-                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>
-              </a>
-              <dl class="meta">
-                <div><dt>Size</dt><dd data-size-setup>@@SIZE_SETUP@@ MB</dd></div>
-                <div>
-                  <dt>SHA-256</dt>
-                  <dd class="hash"><code data-hash-setup>@@HASH_SETUP@@</code>
-                    <button class="copy" type="button" data-copy="setup" aria-label="Copy the installer SHA-256" title="Copy SHA-256">
-                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-                    </button>
-                  </dd>
-                </div>
-              </dl>
-            </article>
-
-            <article class="dl-card glass-card reveal">
-              <div class="dl-head">
-                <span class="dl-icon">
-                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="m3 8 2.5-4h13L21 8"/><path d="M3 8h18M10 12h4"/></svg>
-                </span>
-                <div>
-                  <h3>Portable</h3>
-                  <p class="dl-desc">Unpack the archive and run CaptureButton.exe. Nothing to install.</p>
-                </div>
-                <span class="dl-tag">ZIP</span>
-              </div>
-              <a class="dl-btn dl-btn--ghost" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64.zip" data-dl-zip data-fallback="Download the portable archive (.zip)">
-                <span class="dl-file">CaptureButton<span data-version>-@@VERSION@@-</span>windows-x64.zip</span>
-                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>
-              </a>
-              <dl class="meta">
-                <div><dt>Size</dt><dd data-size-zip>@@SIZE_ZIP@@ MB</dd></div>
-                <div>
-                  <dt>SHA-256</dt>
-                  <dd class="hash"><code data-hash-zip>@@HASH_ZIP@@</code>
-                    <button class="copy" type="button" data-copy="zip" aria-label="Copy the portable archive SHA-256" title="Copy SHA-256">
-                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-                    </button>
-                  </dd>
-                </div>
-              </dl>
-            </article>
+          <div class="pillar-title">
+            <span class="pillar-num">01</span>
+            <h3 data-key="cap.p1.h3">Screenshot</h3>
           </div>
+          <p data-key="cap.p1.p">A screenshot of the screen, a window or a selected region in PNG. Move the frame with the arrow keys, and draw, outline and mask right on top of it.</p>
+          <ul class="tick-list">
+            <li data-key="cap.p1.li1">Full screen, a window or a region</li>
+            <li data-key="cap.p1.li2">Arrow, text, brush and shapes</li>
+            <li data-key="cap.p1.li3">Frame adjustment down to the pixel</li>
+            <li data-key="cap.p1.li4">PNG, clipboard or folder</li>
+          </ul>
+        </article>
 
-          <aside class="req-panel glass-card reveal" aria-labelledby="req-title">
-            <p class="eyebrow"><span>·</span> Before you download</p>
-            <h3 id="req-title">Requirements</h3>
-            <ul class="req-list">
-              <li>
-                <span class="req-key">OS</span>
-                <span class="req-val"><strong>Windows 10 or 11</strong>A 64-bit system</span>
-              </li>
-              <li>
-                <span class="req-key">Install</span>
-                <span class="req-val"><strong>Installer or portable</strong>The archive runs without installation</span>
-              </li>
-              <li>
-                <span class="req-key">Account</span>
-                <span class="req-val"><strong>Not needed</strong>Files stay on the disk</span>
-              </li>
-              <li>
-                <span class="req-key">Languages</span>
-                <span class="req-val"><strong>English · Русский · 中文</strong>English is built in; RU and ZH are JSON catalogs next to CaptureButton.exe</span>
-              </li>
-            </ul>
-            <p class="req-note">The installer is per-user and needs no administrator rights; the portable archive needs no installation. License texts are included in both.</p>
-          </aside>
-        </div>
-
-        <p class="release-note reveal">
-          <span>Every version, the source and the history are on GitHub.</span>
-          <a href="https://github.com/machine202502/capture-button/releases" target="_blank" rel="noopener">Releases <span aria-hidden="true">↗</span></a>
-          <a href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener">Source <span aria-hidden="true">↗</span></a>
-        </p>
-      </div>
-    </section>
-
-    <section class="section" id="licenses" aria-labelledby="licenses-title">
-      <div class="wrap">
-        <header class="section-head reveal">
-          <p class="eyebrow"><span>05</span> Licenses</p>
-          <h2 id="licenses-title">Open source.<br><span class="dim">Clear terms.</span></h2>
-          <p class="section-sub">The source is open and every third-party component is named explicitly — the full license texts travel with the app.</p>
-        </header>
-
-        <div class="license-band glass-card reveal">
-          <div class="license-grid">
-            <article>
-              <p class="license-kicker">Source code</p>
-              <h3>MIT</h3>
-              <p>The Capture Button source can be read, changed and built.</p>
-              <p><a href="https://github.com/machine202502/capture-button/blob/master/LICENSE" target="_blank" rel="noopener">LICENSE <span aria-hidden="true">↗</span></a></p>
-            </article>
-            <article>
-              <p class="license-kicker">Program</p>
-              <h3>GPL-2.0-or-later</h3>
-              <p>The built program includes FFmpeg and x264, so it is distributed under the GNU GPL v2 or later.</p>
-              <p><a href="https://github.com/machine202502/capture-button/blob/master/COPYING" target="_blank" rel="noopener">COPYING <span aria-hidden="true">↗</span></a></p>
-            </article>
-            <article>
-              <p class="license-kicker">Icons</p>
-              <h3>Phosphor · MIT</h3>
-              <p>The overlay icons come from Phosphor Icons. The license text is in the source tree.</p>
-              <p><a href="https://github.com/machine202502/capture-button/blob/master/assets/Phosphor.LICENSE" target="_blank" rel="noopener">Phosphor.LICENSE <span aria-hidden="true">↗</span></a></p>
-            </article>
+        <article class="pillar pillar-featured reveal" data-tilt>
+          <div class="pillar-shot">
+            <picture class="media-picture">
+              <source srcset="../assets/img/screen-record-balanced.webp" type="image/webp">
+              <img src="../assets/img/screen-record-balanced.png" width="1124" height="848" alt="Recording window: MKV format, preset, resolution and frame rate" data-alt-key="alt.record2" loading="lazy" fetchpriority="low" decoding="async">
+            </source></picture>
           </div>
-          <p class="license-fine">
-            The archive and the install folder include COPYING, NOTICE and THIRD-PARTY.txt, with
-            the texts for <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">FFmpeg</a>,
-            <a href="https://www.videolan.org/developers/x264.html" target="_blank" rel="noopener">x264</a>,
-            zlib, libwebp, LAME and the Rust crates. The Capture Button source is MIT; the downloaded program is GPL.
-          </p>
+          <div class="pillar-title">
+            <span class="pillar-num">02</span>
+            <h3 data-key="cap.p2.h3">Recording</h3>
+          </div>
+          <p data-key="cap.p2.p">Video from the screen, a window or a region to MKV — up to 2160p and 60 frames per second. Presets, resolution and frame rate are set on one screen.</p>
+          <ul class="tick-list">
+            <li data-key="cap.p2.li1">Screen, window or region</li>
+            <li data-key="cap.p2.li2">MKV up to 2160p and 60 FPS</li>
+            <li data-key="cap.p2.li3">System sound and microphone</li>
+            <li data-key="cap.p2.li4">Mouse cursor can be shown or hidden</li>
+          </ul>
+        </article>
+
+        <article class="pillar reveal" data-tilt>
+          <div class="pillar-shot">
+            <picture class="media-picture">
+              <source srcset="../assets/img/screen-record-gif.webp" type="image/webp">
+              <img src="../assets/img/screen-record-gif.png" width="1124" height="848" alt="Recording window with GIF selected" data-alt-key="alt.convert" loading="lazy" fetchpriority="low" decoding="async">
+            </source></picture>
+          </div>
+          <div class="pillar-title">
+            <span class="pillar-num">03</span>
+            <h3 data-key="cap.p3.h3">GIF and WebP</h3>
+          </div>
+          <p data-key="cap.p3.p">A short animation for a chat, an article or a bug report. Presets and a frame-rate control keep the file from bloating.</p>
+          <ul class="tick-list">
+            <li data-key="cap.p3.li1">GIF and WebP with one switch</li>
+            <li data-key="cap.p3.li2">Presets like “Balanced”</li>
+            <li data-key="cap.p3.li3">Frame rate up to 60</li>
+            <li data-key="cap.p3.li4">A light file for chat and the web</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section spotlight" id="record">
+      <header class="section-head reveal">
+        <p class="kicker" data-key="spot.kicker">The details that stick</p>
+        <h2 data-key="spot.h2">Capture without extra moves</h2>
+        <p class="lede" data-key="spot.lede">The things that usually hide behind three menus work on the first click here.</p>
+      </header>
+
+      <div class="bento">
+        <article class="bento-item bento-wide reveal" data-tilt>
+          <div class="bento-media">
+            <picture class="media-picture">
+              <source srcset="../assets/img/region-wide.webp" type="image/webp">
+              <img src="../assets/img/region-wide.png" width="1366" height="768" alt="Annotations: arrow and text box on the selected region" data-alt-key="alt.region" loading="lazy" fetchpriority="low" decoding="async">
+            </source></picture>
+          </div>
+          <div class="bento-copy">
+            <h3 data-key="spot.b1.h3">Draw on the fly</h3>
+            <p data-key="spot.b1.p">Arrow, line, rectangle, highlight, text and color — everything you need to explain a screenshot without words.</p>
+          </div>
+        </article>
+
+        <article class="bento-item reveal" data-tilt>
+          <div class="bento-media">
+            <picture class="media-picture">
+              <source srcset="../assets/img/region-frame.webp" type="image/webp">
+              <img src="../assets/img/region-frame.png" width="600" height="450" alt="Selection frame: dimensions on the frame and toolbar" data-alt-key="alt.annotate" loading="lazy" fetchpriority="low" decoding="async">
+            </source></picture>
+          </div>
+          <div class="bento-copy">
+            <h3 data-key="spot.b2.h3">A frame that listens</h3>
+            <p data-key="spot.b2.p">Select a region over the screen and get it right to the pixel — the size is shown on the frame, and the toolbar is always at hand.</p>
+          </div>
+        </article>
+
+        <article class="bento-item reveal" data-tilt>
+          <div class="bento-media">
+            <picture class="media-picture">
+              <source srcset="../assets/img/screen-about.webp" type="image/webp">
+              <img src="../assets/img/screen-about.png" width="1124" height="845" alt="About window: version, FFmpeg and x264 licenses, links" data-alt-key="alt.about" loading="lazy" fetchpriority="low" decoding="async">
+            </source></picture>
+          </div>
+          <div class="bento-copy">
+            <h3 data-key="spot.b3.h3">Version and licenses in plain sight</h3>
+            <p data-key="spot.b3.p">The version, the FFmpeg, x264 and Phosphor Icons license texts and a link to the source — all in one About window.</p>
+          </div>
+        </article>
+
+        <article class="bento-item bento-wide reveal" data-tilt>
+          <div class="bento-media">
+            <picture class="media-picture">
+              <source srcset="../assets/img/screen-settings.webp" type="image/webp">
+              <img src="../assets/img/screen-settings.png" width="1124" height="858" alt="Settings: start with Windows, tray, copy to clipboard" data-alt-key="alt.settings" loading="lazy" fetchpriority="low" decoding="async">
+            </source></picture>
+          </div>
+          <div class="bento-copy">
+            <h3 data-key="spot.b4.h3">Make it yours</h3>
+            <p data-key="spot.b4.p">Start with Windows, run from the tray, copy the file to the clipboard and hide the window during capture. Every toggle is remembered.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <div class="camera-interlude">
+      <div class="interlude-cam camera-shutter" role="button" tabindex="0" aria-label="Take a screenshot" data-aria-key="camera.shutter" data-camera-shutter>
+        <div class="cam-bloom" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <section class="section how" id="convert">
+      <header class="section-head reveal">
+        <p class="kicker" data-key="cnv.kicker">From frame to file</p>
+        <h2 data-key="cnv.h2">Three steps and the file is yours</h2>
+        <p class="lede" data-key="cnv.lede">FFmpeg is already inside, so there is nothing to install: Capture Button builds the MKV, GIF or WebP itself.</p>
+      </header>
+
+      <div class="how-grid">
+        <ol class="how-steps">
+          <li class="how-step reveal">
+            <span class="step-dot">1</span>
+            <div>
+              <h3 data-key="cnv.step1.h3">Select a region</h3>
+              <p data-key="cnv.step1.p">A frame over the screen: drag the corners or use the arrow keys to get the size you want.</p>
+            </div>
+          </li>
+          <li class="how-step reveal" data-delay="100">
+            <span class="step-dot">2</span>
+            <div>
+              <h3 data-key="cnv.step2.h3">Screenshot or record</h3>
+              <p data-key="cnv.step2.p">A PNG screenshot, an MKV video or a short GIF and WebP animation — in one click.</p>
+            </div>
+          </li>
+          <li class="how-step reveal" data-delay="200">
+            <span class="step-dot">3</span>
+            <div>
+              <h3 data-key="cnv.step3.h3">Take the file</h3>
+              <p data-key="cnv.step3.p">The file is already in the folder and on the clipboard: open it, copy it or show it in Explorer.</p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="how-visual reveal" data-delay="150">
+          <div class="convert-card tilt">
+            <div class="convert-io">
+              <div class="convert-pill" data-key="cnv.from">REC</div>
+              <div class="convert-arrow" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="convert-pill convert-pill-out" data-key="cnv.to">MKV</div>
+            </div>
+            <div class="convert-frames" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div class="convert-progress"><i style="--p:0%"></i></div>
+            <p class="convert-caption"><span data-wobble data-key="cnv.caption">REC → MKV ·</span> <span class="convert-percent" id="convertPercent"><span class="wobble-letter" style="--i:11"></span><span class="wobble-letter" style="--i:12">0</span><span class="wobble-letter" style="--i:13">%</span></span></p>
+          </div>
         </div>
       </div>
     </section>
 
+    <section class="section why" id="why">
+      <header class="section-head reveal">
+        <p class="kicker" data-key="why.kicker">Why Capture Button</p>
+        <h2 data-key="why.h2">A tool that respects you</h2>
+      </header>
+
+      <div class="why-grid">
+        <article class="why-item reveal">
+          <span class="why-icon">∞</span>
+          <h3 data-key="why.free.h3">Free forever</h3>
+          <p data-key="why.free.p">No subscriptions, watermarks or recording limits. The source is open under MIT — look and see for yourself.</p>
+        </article>
+        <article class="why-item reveal" data-delay="60">
+          <span class="why-icon">1</span>
+          <h3 data-key="why.one.h3">One file</h3>
+          <p data-key="why.one.p">A single executable with FFmpeg built in. Nothing else to install or set up.</p>
+        </article>
+        <article class="why-item reveal" data-delay="120">
+          <span class="why-icon">⌂</span>
+          <h3 data-key="why.local.h3">Everything stays with you</h3>
+          <p data-key="why.local.p">Files are written to your disk. No clouds, no accounts, no sending your recordings anywhere.</p>
+        </article>
+        <article class="why-item reveal" data-delay="180">
+          <span class="why-icon">文</span>
+          <h3 data-key="why.lang.h3">Three languages</h3>
+          <p data-key="why.lang.p">English, Russian and Chinese. Switch the language in the settings; it is picked up from the system and remembered.</p>
+        </article>
+        <article class="why-item reveal" data-delay="240">
+          <span class="why-icon">↻</span>
+          <h3 data-key="why.tray.h3">Lives in the tray</h3>
+          <p data-key="why.tray.p">Click the icon and capture starts. Recent files are at hand: open, copy or show in the folder.</p>
+        </article>
+        <article class="why-item reveal" data-delay="300">
+          <span class="why-icon">◐</span>
+          <h3 data-key="why.lic.h3">Clear licensing</h3>
+          <p data-key="why.lic.p">Source under MIT, the built app under GPL because of FFmpeg and x264, Phosphor icons under MIT. The license texts ship with the app.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <div class="final-cta-inner reveal">
+        <canvas class="cta-fog" aria-hidden="true"></canvas>
+        <h2><span data-key="cta.lead">Start capturing beautifully.</span> <span class="gradient-text cta-free" data-wobble data-key="cta.free">Free.</span></h2>
+        <p data-key="cta.p">Download Capture Button, select a region — and a minute later you have your first annotated screenshot.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary magnetic" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.msi" target="_blank" rel="noopener" data-key="cta.primary">Download ↗</a>
+          <a class="btn btn-ghost magnetic" href="#top" data-key="cta.ghost">Back to top</a>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <footer class="site-footer">
-    <div class="footer-grid wrap">
-      <div class="footer-brand">
-        <img src="../assets/icon.png" alt="" width="34" height="34">
-        <div>
-          <strong>Capture Button</strong>
-          <span>Windows 10/11 · 64-bit</span>
-        </div>
+  <footer class="footer">
+    <div class="footer-peek" data-footer-peek aria-hidden="true">
+      <button class="footer-peek-trigger" type="button" tabindex="-1" aria-label="Hide the camera" data-aria-key="camera.hidePeek">
+        <span class="footer-peek-bloom" aria-hidden="true"></span>
+      </button>
+    </div>
+
+    <div class="footer-inner">
+      <a class="brand" href="#top">
+        <img class="brand-icon" src="../assets/img/icon.png" alt="" width="34" height="34" aria-hidden="true">
+        <span class="brand-name">Capture Button</span>
+      </a>
+      <p data-key="footer.p">A screen capture tool in Rust for Windows. MKV recording, PNG screenshots, short GIF and WebP clips.</p>
+      <div class="footer-links">
+        <a href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener" data-key="footer.source">Source code</a>
+        <a href="https://github.com/machine202502/capture-button#readme" target="_blank" rel="noopener" data-key="footer.build">Build from source</a>
       </div>
-      <nav class="footer-nav" aria-label="Footer links">
-        <a href="https://github.com/machine202502/capture-button" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/machine202502/capture-button/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="#licenses">Licenses</a>
-      </nav>
-      <p class="footer-legal">
-        © <span data-year>2026</span> Capture Button · source
-        <a href="https://github.com/machine202502/capture-button/blob/master/LICENSE" target="_blank" rel="noopener">MIT</a>
-        · program
-        <a href="https://github.com/machine202502/capture-button/blob/master/COPYING" target="_blank" rel="noopener">GPL</a>
-      </p>
+      <p class="footer-note" data-key="footer.note">MIT © Capture Button. Binary builds are under GPL because of FFmpeg/libx264.</p>
     </div>
   </footer>
 
-  <script src="../ocean.js" defer></script>
-  <script src="../app.js" defer></script>
+  <script src="../assets/js/main.js?v=46"></script>
 </body>
 </html>
