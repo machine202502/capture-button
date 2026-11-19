@@ -92,6 +92,15 @@ jobs:
             --pattern '*.nupkg' \
             --dir "$GITHUB_WORKSPACE/site/updates" --clobber
 
+      - name: Fill build hash into the site
+        run: |
+          set -euo pipefail
+          cd site
+          short="${GITHUB_SHA:0:7}"
+          for page in index.html en/index.html zh/index.html; do
+            sed -i "s/@@COMMIT@@/${short}/g" "$page"
+          done
+
       - name: Fill release data into the site
         if: steps.release.outputs.version != ''
         run: |

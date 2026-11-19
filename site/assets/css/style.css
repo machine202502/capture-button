@@ -1633,6 +1633,44 @@ html[lang="ru"] .cta-free {
   font-size: 15px;
 }
 
+.cta-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 18px 0 0;
+  font-size: 13px;
+  color: rgba(226, 240, 255, 0.52);
+}
+
+.cta-meta a {
+  color: rgba(226, 240, 255, 0.8);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.35);
+  padding-bottom: 1px;
+  transition: color 0.3s ease, border-color 0.3s ease;
+}
+
+.cta-meta a:hover {
+  color: #eaf7ff;
+  border-color: rgba(125, 211, 252, 0.8);
+}
+
+.cta-meta-dot {
+  color: rgba(226, 240, 255, 0.28);
+}
+
+.cta-hash {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  color: rgba(226, 240, 255, 0.72);
+  background: rgba(125, 211, 252, 0.08);
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
 .footer-links {
   display: flex;
   gap: 26px;
@@ -1870,6 +1908,15 @@ html[lang="ru"] .cta-free {
 }
 
 @media (max-width: 720px) {
+  .cta-meta {
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .cta-meta-dot {
+    display: none;
+  }
+
   .nav-links {
     display: none;
   }

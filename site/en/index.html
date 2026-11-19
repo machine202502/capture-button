@@ -28,7 +28,7 @@
   <link rel="icon" type="image/png" href="../assets/img/icon.png">
   <link rel="apple-touch-icon" href="../assets/img/icon-512.png">
   <link rel="preload" as="image" href="../assets/img/screen-record.webp" type="image/webp" fetchpriority="high">
-  <link rel="stylesheet" href="../assets/css/style.css?v=35">
+  <link rel="stylesheet" href="../assets/css/style.css?v=47">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -430,9 +430,17 @@
         <h2><span data-key="cta.lead">Start capturing beautifully.</span> <span class="gradient-text cta-free" data-wobble data-key="cta.free">Free.</span></h2>
         <p data-key="cta.p">Download Capture Button, select a region — and a minute later you have your first annotated screenshot.</p>
         <div class="hero-cta">
-          <a class="btn btn-primary magnetic" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.msi" target="_blank" rel="noopener" data-key="cta.primary">Download ↗</a>
+          <a class="btn btn-primary magnetic" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64-setup.msi" target="_blank" rel="noopener" title="sha256 @@HASH_SETUP@@" data-key="cta.primary">Download ↗</a>
           <a class="btn btn-ghost magnetic" href="#top" data-key="cta.ghost">Back to top</a>
         </div>
+        <p class="cta-meta">
+          <a class="cta-portable" href="https://github.com/machine202502/capture-button/releases/latest/download/CaptureButton-@@VERSION@@-windows-x64.zip" target="_blank" rel="noopener" title="sha256 @@HASH_ZIP@@" data-key="cta.portable">Portable version</a>
+          <span class="cta-meta-dot">·</span>
+          <span class="cta-meta-size">ZIP · @@SIZE_ZIP@@ MB</span>
+          <span class="cta-meta-dot">·</span>
+          <span data-key="cta.build">build</span>
+          <code class="cta-hash">@@COMMIT@@</code>
+        </p>
       </div>
     </section>
   </main>
@@ -458,6 +466,6 @@
     </div>
   </footer>
 
-  <script src="../assets/js/main.js?v=46"></script>
+  <script src="../assets/js/main.js?v=47"></script>
 </body>
 </html>
