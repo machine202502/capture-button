@@ -44,7 +44,7 @@ fn main() {
     resource.set_icon("assets/CaptureButton.ico");
     resource.set_manifest_file("assets/app.manifest");
     resource.set("ProductName", "Capture Button");
-    resource.set("FileDescription", "Screen, region and audio capture");
+    resource.set("FileDescription", "Capture Button");
     resource.set(
         "Comments",
         "https://github.com/machine202502/capture-button — includes FFmpeg and x264 under the GNU GPL v2 or later (https://ffmpeg.org/legal.html) and Phosphor Icons under the MIT License (https://phosphoricons.com). Other notices are in THIRD-PARTY.txt.",

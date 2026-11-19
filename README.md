@@ -50,7 +50,7 @@ builds update manually.
 
 The feed and its `.nupkg` packages are copied from the GitHub release into the
 site by `.github/workflows/site.yml`. Existing Inno Setup 0.3.x installs must
-install 0.4.1 once by hand; later versions update from the About window.
+install 0.4.2 once by hand; later versions update from the About window.
 
 0.4.x is an MSI. Uninstall it through **Settings → Apps** (or `msiexec /x` on
 the MSI). Do not delete the install folder and do not use
