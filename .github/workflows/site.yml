@@ -40,7 +40,6 @@ jobs:
           fi
           tag=$(cat /tmp/tag.txt)
           version=${tag#v}
-          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Release $tag"
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
           mkdir -p /tmp/capture-button-release
@@ -77,6 +76,12 @@ jobs:
             echo "$name $size MB $hash"
           }
           fill_asset 'windows-x64.zip' zip
+          if [ -z "$(asset '-setup.msi' name)" ]; then
+            echo "Release $tag has no MSI asset yet; deploying placeholders."
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           fill_asset '-setup.msi' setup
 
           mkdir -p "$GITHUB_WORKSPACE/site/updates"
