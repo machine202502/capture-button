@@ -1,4 +1,4 @@
-﻿# Capture Button
+# Capture Button
 
 Windows program for screen, region, and audio capture. It records MKV, GIF, and WebP, takes screenshots, and can keep running from the tray.
 
@@ -38,11 +38,13 @@ Use the same `FFMPEG_DIR`.
 cargo test --bin CaptureButton
 ```
 
-That runs the unit tests. Snapshot tests are ignored. They compare the window and the area overlay at scale 1 and need a desktop:
+That runs the unit tests. The end-to-end checks live in `tests/e2e.rs` and are ignored:
 
 ```powershell
-cargo test --bin CaptureButton -- --ignored
+cargo test --test e2e -- --ignored
 ```
 
-Set `CAPTURE_BUTTON_UPDATE_SNAPSHOTS` to any value to replace the images in `tests\snapshots` instead of comparing them.
+They drive the hidden native window and capture the visible Slint window. Set
+`EZCAP_UPDATE_SNAPSHOTS` to any value to replace the images in `tests\snapshots`
+and `site\assets` instead of comparing them.
 

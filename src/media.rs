@@ -6,6 +6,7 @@ use ffmpeg_next as ffmpeg;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+use std::time::Duration;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -449,6 +450,12 @@ fn copy_bgra(data: &Frame, destination: &mut frame::Video) -> Result<(), String>
 /// Closes the clipboard on every exit path, including an early `?`.
 struct Clipboard;
 
+/// `OpenClipboard` does not wait. While another process (an RDP client or a
+/// clipboard manager) holds the clipboard open, it fails with
+/// `ERROR_ACCESS_DENIED`; retrying is the Win32 way to wait for that lock.
+const CLIPBOARD_ATTEMPTS: usize = 10;
+const CLIPBOARD_RETRY_DELAY: Duration = Duration::from_millis(20);
+
 impl Clipboard {
     fn open() -> Result<Self, String> {
         unsafe {
@@ -456,6 +463,22 @@ impl Clipboard {
             OpenClipboard(None).map_err(|error| error.to_string())?;
         }
         Ok(Self)
+    }
+
+    fn open_with_retry() -> Result<Self, String> {
+        let mut last = String::new();
+        for attempt in 0..CLIPBOARD_ATTEMPTS {
+            match Self::open() {
+                Ok(clipboard) => return Ok(clipboard),
+                Err(error) => {
+                    last = error;
+                    if attempt + 1 < CLIPBOARD_ATTEMPTS {
+                        std::thread::sleep(CLIPBOARD_RETRY_DELAY);
+                    }
+                }
+            }
+        }
+        Err(last)
     }
 }
 
@@ -582,7 +605,7 @@ pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
     // SAFETY: The guard owns the clipboard. The drop list is sized to the path
     // and handed to the clipboard; on failure its block is freed here.
     unsafe {
-        let _clipboard = Clipboard::open()?;
+        let _clipboard = Clipboard::open_with_retry()?;
         EmptyClipboard().map_err(|e| e.to_string())?;
         let path = path
             .to_string_lossy()
@@ -602,62 +625,6 @@ pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
             GlobalFree(memory);
             return Err(error.to_string());
         }
-        Ok(())
-    }
-}
-
-pub fn copy_image_to_clipboard(frame: &Frame) -> Result<(), String> {
-    // SAFETY: The screen DC is released before return. The bitmap header size is set, and the copy uses only the frame's byte count.
-    unsafe {
-        let _clipboard = Clipboard::open()?;
-        let screen = GetDC(None);
-        let dc = CreateCompatibleDC(screen);
-        let mut info: BITMAPINFO = std::mem::zeroed();
-        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-        info.bmiHeader.biWidth = frame.width as i32;
-        info.bmiHeader.biHeight = -(frame.height as i32);
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB.0;
-        let mut bits = std::ptr::null_mut();
-        let bitmap = match CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, None, 0) {
-            Ok(bitmap) if !bits.is_null() => bitmap,
-            _ => {
-                DeleteDC(dc);
-                ReleaseDC(None, screen);
-                return Err("Cannot allocate the clipboard image".into());
-            }
-        };
-        let bytes = frame.width as usize * frame.height as usize * 4;
-        if frame.data.len() < bytes {
-            DeleteObject(bitmap);
-            DeleteDC(dc);
-            ReleaseDC(None, screen);
-            return Err("Frame size does not match the image".into());
-        }
-        std::ptr::copy_nonoverlapping(frame.data.as_ptr(), bits.cast::<u8>(), bytes);
-        let old = SelectObject(dc, bitmap);
-        if let Err(error) = EmptyClipboard() {
-            SelectObject(dc, old);
-            DeleteObject(bitmap);
-            DeleteDC(dc);
-            ReleaseDC(None, screen);
-            return Err(error.to_string());
-        }
-        if let Err(error) = SetClipboardData(
-            windows::Win32::System::Ole::CF_BITMAP.0 as u32,
-            HANDLE(bitmap.0),
-        ) {
-            SelectObject(dc, old);
-            DeleteObject(bitmap);
-            DeleteDC(dc);
-            ReleaseDC(None, screen);
-            return Err(error.to_string());
-        }
-        // The clipboard now owns the bitmap.
-        SelectObject(dc, old);
-        DeleteDC(dc);
-        ReleaseDC(None, screen);
         Ok(())
     }
 }

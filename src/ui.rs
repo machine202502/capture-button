@@ -18,13 +18,15 @@ use windows::Win32::Graphics::Dwm::DwmFlush;
 use windows::Win32::Graphics::Gdi::{
     RedrawWindow, HRGN, RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW,
 };
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClientRect, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
-    IsWindowVisible, PostMessageW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-    MINMAXINFO, SIZE_RESTORED, SM_CXSCREEN, SM_CYSCREEN, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_NOZORDER, WINDOWPOS, WM_ACTIVATE, WM_APP, WM_GETMINMAXINFO, WM_SHOWWINDOW, WM_SIZE,
-    WM_WINDOWPOSCHANGING, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SetWindowLongPtrW, SetWindowPos,
+    GWL_EXSTYLE, GWL_STYLE, MINMAXINFO, SIZE_RESTORED, SM_CXSCREEN, SM_CYSCREEN, SWP_FRAMECHANGED,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WINDOWPOS, WM_ACTIVATE, WM_APP, WM_GETMINMAXINFO,
+    WM_SHOWWINDOW, WM_SIZE, WM_WINDOWPOSCHANGING, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
+    WS_THICKFRAME,
 };
 
 slint::include_modules!();
@@ -319,6 +321,13 @@ fn install_paint_guard() {
 unsafe extern "system" fn find_slint_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     // SAFETY: hwnd was supplied by EnumWindows and is only queried.
     if !unsafe { IsWindowVisible(hwnd).as_bool() } {
+        return BOOL(1);
+    }
+    let mut owner = 0u32;
+    // SAFETY: The window handle comes from EnumWindows and the pid pointer is a writable local.
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner)) };
+    // SAFETY: GetCurrentProcessId has no preconditions.
+    if owner != unsafe { GetCurrentProcessId() } {
         return BOOL(1);
     }
     let mut title = [0u16; 32];

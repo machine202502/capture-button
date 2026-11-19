@@ -1427,20 +1427,20 @@ impl App {
 
     fn completed(&mut self, path: PathBuf) {
         logging::info(format!("saved {}", path.display()));
-        if self.settings.clipboard {
-            if let Err(error) = media::copy_file_to_clipboard(&path) {
-                self.error(&error);
-            }
-        }
         self.controls.set_text(
             ID_STATUS,
             &trf("Saved: {path}", &[("path", &path.display().to_string())]),
         );
         self.saved_path = Some(path.clone());
-        self.history.insert(0, (path, history_line_now()));
+        self.history.insert(0, (path.clone(), history_line_now()));
         self.history.truncate(ui::HISTORY_COUNT as usize);
         settings::save_history(&self.history);
         self.refresh_history();
+        if self.settings.clipboard {
+            if let Err(error) = media::copy_file_to_clipboard(&path) {
+                logging::warn(format!("copy file to clipboard failed: {error}"));
+            }
+        }
     }
 
     /// A screenshot or camera photo reached the disk. The completion sound

@@ -412,12 +412,7 @@ impl Region {
         };
         let Some(path) = path else { return };
         match media::save_frame(&frame, &path) {
-            Ok(()) => {
-                if !choose_path {
-                    let _ = media::copy_image_to_clipboard(&frame);
-                }
-                self.finish(Outcome::Saved(path));
-            }
+            Ok(()) => self.finish(Outcome::Saved(path)),
             Err(error) => {
                 message(&error);
             }
