@@ -156,7 +156,10 @@ mod tests {
 
     #[test]
     fn a_broken_frame_reports_the_translated_message() {
-        let error = decode_mjpeg(b"not a jpeg").unwrap_err();
+        let error = match decode_mjpeg(b"not a jpeg") {
+            Ok(_) => panic!("a non-JPEG must not decode"),
+            Err(error) => error,
+        };
         assert!(
             error.starts_with("The camera frame could not be decoded"),
             "{error}"
