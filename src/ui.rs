@@ -9,8 +9,8 @@ use crate::i18n::{tr, trf};
 use crate::{media, AudioSettings, CaptureSettings, ProfileRef, Settings};
 use media::{Format, VideoSettings};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
+use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -18,15 +18,16 @@ use windows::Win32::Graphics::Dwm::DwmFlush;
 use windows::Win32::Graphics::Gdi::{
     RedrawWindow, HRGN, RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW,
 };
-use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClientRect, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
-    GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SetWindowLongPtrW, SetWindowPos,
-    GWL_EXSTYLE, GWL_STYLE, MINMAXINFO, SIZE_RESTORED, SM_CXSCREEN, SM_CYSCREEN, SWP_FRAMECHANGED,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WINDOWPOS, WM_ACTIVATE, WM_APP, WM_GETMINMAXINFO,
-    WM_SHOWWINDOW, WM_SIZE, WM_WINDOWPOSCHANGING, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
-    WS_THICKFRAME,
+    DispatchMessageW, EnumWindows, GetClientRect, GetSystemMetrics, GetWindowLongPtrW,
+    GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PeekMessageW,
+    PostMessageW, PostThreadMessageW, SetWindowLongPtrW, SetWindowPos, TranslateMessage,
+    WaitMessage, GWL_EXSTYLE, GWL_STYLE, MINMAXINFO, MSG, PM_REMOVE, SIZE_RESTORED, SM_CXSCREEN,
+    SM_CYSCREEN, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WINDOWPOS, WM_ACTIVATE,
+    WM_APP, WM_GETMINMAXINFO, WM_SHOWWINDOW, WM_SIZE, WM_WINDOWPOSCHANGING, WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 slint::include_modules!();
@@ -241,8 +242,14 @@ enum UiCommand {
     Show(Controls),
 }
 
+/// Wakes the UI thread out of `WaitMessage` when a command is queued. It is a
+/// thread message (no window), so the Slint event loop simply ignores it while
+/// the window is open.
+const WM_UI_WAKE: u32 = WM_APP + 5;
+
 static UI_REQUESTS: Mutex<Vec<UiRequest>> = Mutex::new(Vec::new());
 static UI_HWND: AtomicIsize = AtomicIsize::new(0);
+static UI_TID: AtomicU32 = AtomicU32::new(0);
 static UI_VISIBLE: AtomicBool = AtomicBool::new(false);
 static UI_WEAK: Mutex<Option<slint::Weak<MainWindow>>> = Mutex::new(None);
 static UI_TX: OnceLock<Sender<UiCommand>> = OnceLock::new();
@@ -481,6 +488,20 @@ pub fn show(controls: &Controls) {
     });
     UI_VISIBLE.store(true, Ordering::Relaxed);
     tx.send(UiCommand::Show(controls.clone())).ok();
+    wake_ui_thread();
+}
+
+/// The UI thread parks in `WaitMessage`, not in `recv`, so posting a command
+/// needs a nudge. The message itself carries nothing.
+fn wake_ui_thread() {
+    let thread = UI_TID.load(Ordering::Relaxed);
+    if thread != 0 {
+        unsafe {
+            // SAFETY: The id belongs to this process's UI thread, and a posted
+            // message carries no pointer.
+            let _ = PostThreadMessageW(thread, WM_UI_WAKE, WPARAM(0), LPARAM(0));
+        }
+    }
 }
 
 /// Rebuild every translated string on the live window. The language catalog is
@@ -529,7 +550,17 @@ fn activate() {
 }
 
 fn ui_thread(rx: mpsc::Receiver<UiCommand>) {
-    while let Ok(UiCommand::Show(controls)) = rx.recv() {
+    UI_TID.store(
+        unsafe {
+            // SAFETY: GetCurrentThreadId has no preconditions.
+            GetCurrentThreadId()
+        },
+        Ordering::Relaxed,
+    );
+    loop {
+        let Some(UiCommand::Show(controls)) = next_command(&rx) else {
+            return;
+        };
         let ui = match MainWindow::new() {
             Ok(ui) => ui,
             Err(error) => {
@@ -579,6 +610,31 @@ fn ui_thread(rx: mpsc::Receiver<UiCommand>) {
         *UI_WEAK.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if let Err(error) = result {
             eprintln!("Capture Button: UI loop stopped: {error}");
+        }
+    }
+}
+
+/// Waits for the next `Show` command without blocking this thread's Win32
+/// queue. Slint keeps the winit event loop, and with it winit's small hidden
+/// thread-event window, alive after `ui.run()` returns. If the thread then sat
+/// in `recv`, nothing would answer that window, Windows would flag it as hung
+/// and DWM would draw its "ghost" as a black square in the screen corner.
+fn next_command(rx: &mpsc::Receiver<UiCommand>) -> Option<UiCommand> {
+    loop {
+        match rx.try_recv() {
+            Ok(command) => return Some(command),
+            Err(TryRecvError::Disconnected) => return None,
+            Err(TryRecvError::Empty) => {}
+        }
+        unsafe {
+            // SAFETY: WaitMessage waits on this thread's own queue; the messages
+            // drained below are only the ones already addressed to it.
+            let _ = WaitMessage();
+            let mut message = MSG::default();
+            while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
         }
     }
 }
