@@ -752,14 +752,14 @@ export component MainWindow inherits Window {
                     Card {
                         SectionTitle { text: Labels.preferences; }
                         Toggle { label: Labels.start_with_windows; checked: root.autostart; toggled => { root.toggle(150); } }
-                        Toggle { label: Labels.start_minimized; checked: root.start-minimized; toggled => { root.toggle(151); } }
+                        Toggle { label: Labels.start_minimized; enabled: root.autostart; checked: root.start-minimized; toggled => { root.toggle(151); } }
                         Toggle { label: Labels.hide_active; checked: root.hide-active; toggled => { root.toggle(152); } }
                         Toggle { label: Labels.close_tray; checked: root.close-tray; toggled => { root.toggle(153); } }
                         Toggle { label: Labels.clipboard; checked: root.clipboard; toggled => { root.toggle(154); } }
                         Toggle { label: Labels.tray_capture; checked: root.tray-capture; toggled => { root.toggle(155); } }
                         Toggle { label: Labels.highlight; checked: root.highlight; toggled => { root.toggle(156); } }
                         Toggle { label: Labels.no_signal; checked: root.no-signal; toggled => { root.toggle(158); } }
-                        Toggle { label: Labels.show_card; checked: root.show-card; toggled => { root.toggle(159); } }
+                        Toggle { label: Labels.show_card; enabled: root.no-signal; checked: root.show-card; toggled => { root.toggle(159); } }
                     }
 
                     Card {

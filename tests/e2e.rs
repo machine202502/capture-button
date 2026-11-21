@@ -123,7 +123,8 @@ fn prepare_settings() {
     for (name, value) in [
         ("clipboard", 0),
         ("hide_active", 0),
-        ("start_minimized", 0),
+        ("autostart", 1),
+        ("start_minimized", 1),
         ("format", 0),
         ("mkv_height", 480),
         ("mkv_fps", 30),
