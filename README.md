@@ -22,6 +22,8 @@ applied immediately.
 
 Windows x64, a stable Rust toolchain, and a static FFmpeg install from `vcpkg.json` (codecs: H.264, WebP, MP3). Point `FFMPEG_DIR` at that prefix. It must contain `lib` and `lib/pkgconfig`.
 
+Camera frames that arrive as MJPEG are decoded by the Rust `image` crate, not by FFmpeg. The slim FFmpeg build leaves the `mjpeg` decoder out, so the camera path must not go back to `avcodec`.
+
 ```powershell
 $env:FFMPEG_DIR = "C:\path\to\vcpkg_installed\x64-windows-static"
 cargo build --release --bin CaptureButton

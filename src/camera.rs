@@ -1,6 +1,5 @@
 use crate::media::{self, Frame};
 use crate::tr;
-use ffmpeg_next as ffmpeg;
 use nokhwa::pixel_format::YuyvFormat;
 pub use nokhwa::utils::CameraIndex;
 use nokhwa::utils::{ApiBackend, FrameFormat, RequestedFormat, RequestedFormatType};
@@ -115,54 +114,52 @@ fn decode_nv12(encoded: &[u8], resolution: nokhwa::utils::Resolution) -> Result<
     })
 }
 
+/// UVC cameras send MJPEG as ordinary JPEG frames, so the pure-Rust decoder is
+/// enough. FFmpeg is built for this app without the `mjpeg` decoder on purpose,
+/// and every camera that negotiates MJPEG would otherwise fail here.
 fn decode_mjpeg(encoded: &[u8]) -> Result<Frame, String> {
-    let codec = ffmpeg::decoder::find_by_name("mjpeg")
-        .ok_or_else(|| tr("The MJPEG decoder is unavailable").to_string())?;
-    let mut decoder = ffmpeg::codec::context::Context::new_with_codec(codec)
-        .decoder()
-        .video()
-        .map_err(|error| error.to_string())?;
-    let packet = ffmpeg::Packet::copy(encoded);
-    decoder
-        .send_packet(&packet)
-        .map_err(|error| error.to_string())?;
-    let mut decoded = ffmpeg::frame::Video::empty();
-    decoder
-        .receive_frame(&mut decoded)
-        .map_err(|error| error.to_string())?;
-    let width = decoded.width();
-    let height = decoded.height();
-    if width < 2 || height < 2 {
-        return Err(tr("The camera returned an empty frame"));
-    }
-    let mut scaler = ffmpeg::software::scaling::Context::get(
-        decoded.format(),
-        width,
-        height,
-        ffmpeg::format::Pixel::BGRA,
-        width,
-        height,
-        ffmpeg::software::scaling::flag::Flags::BILINEAR,
-    )
-    .map_err(|error| error.to_string())?;
-    let mut converted = ffmpeg::frame::Video::empty();
-    scaler
-        .run(&decoded, &mut converted)
-        .map_err(|error| error.to_string())?;
-    let stride = converted.stride(0);
-    let row = width as usize * 4;
-    let mut data = vec![0u8; row * height as usize];
-    for y in 0..height as usize {
-        let source = &converted.data(0)[y * stride..y * stride + row];
-        data[y * row..(y + 1) * row].copy_from_slice(source);
-    }
-    Ok(Frame {
-        width,
-        height,
-        data,
-    })
+    let decoded = image::load_from_memory_with_format(encoded, image::ImageFormat::Jpeg)
+        .map_err(|error| format!("{}: {error}", tr("The camera frame could not be decoded")))?;
+    let rgb = decoded.into_rgb8();
+    frame_from_rgb(rgb.dimensions(), rgb.into_raw())
 }
 
 fn camera_error(error: &nokhwa::NokhwaError) -> String {
     format!("{}: {error}", tr("Camera"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 32×24 JPEG: red left half, blue right half.
+    const MJPEG_FRAME: &[u8] = include_bytes!("../tests/data/camera-frame.jpg");
+
+    fn pixel(frame: &Frame, x: usize, y: usize) -> [u8; 4] {
+        let index = (y * frame.width as usize + x) * 4;
+        frame.data[index..index + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn an_mjpeg_frame_becomes_bgra_without_ffmpeg() {
+        let frame = decode_mjpeg(MJPEG_FRAME).expect("the fixture decodes");
+        assert_eq!((frame.width, frame.height), (32, 24));
+        assert_eq!(frame.data.len(), 32 * 24 * 4);
+
+        let red = pixel(&frame, 8, 12);
+        assert!(red[2] > 150 && red[1] < 90 && red[0] < 90, "{red:?}");
+        let blue = pixel(&frame, 24, 12);
+        assert!(blue[0] > 150 && blue[1] < 110 && blue[2] < 90, "{blue:?}");
+        assert_eq!(red[3], 255);
+        assert_eq!(blue[3], 255);
+    }
+
+    #[test]
+    fn a_broken_frame_reports_the_translated_message() {
+        let error = decode_mjpeg(b"not a jpeg").unwrap_err();
+        assert!(
+            error.starts_with("The camera frame could not be decoded"),
+            "{error}"
+        );
+    }
 }

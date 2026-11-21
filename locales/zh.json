@@ -136,6 +136,6 @@
     "camera video": "摄像头视频",
     "Unsupported camera format": "不支持的摄像头格式",
     "The camera returned an empty frame": "摄像头返回了空帧",
-    "The MJPEG decoder is unavailable": "MJPEG 解码器不可用"
+    "The camera frame could not be decoded": "无法解码摄像头画面"
   }
 }

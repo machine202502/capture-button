@@ -544,10 +544,11 @@ dependencies = [
 
 [[package]]
 name = "capture-button"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "cpal",
  "ffmpeg-next",
+ "image",
  "nokhwa",
  "png 0.17.16",
  "serde_json",

@@ -136,6 +136,6 @@
     "camera video": "видео с камеры",
     "Unsupported camera format": "Неподдерживаемый формат камеры",
     "The camera returned an empty frame": "Камера вернула пустой кадр",
-    "The MJPEG decoder is unavailable": "Декодер MJPEG недоступен"
+    "The camera frame could not be decoded": "Не удалось декодировать кадр с камеры"
   }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "capture-button"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 license = "MIT"
 build = "build.rs"
@@ -13,6 +13,7 @@ path = "src/main.rs"
 cpal = "0.18"
 serde_json = "1"
 png = "0.17"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 ffmpeg-next = { version = "8", default-features = false, features = ["codec", "format", "filter", "software-scaling", "software-resampling"] }
 windows-capture = "2.0.1"
 velopack = "1.2.161"
