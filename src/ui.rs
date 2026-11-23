@@ -39,16 +39,24 @@ pub const ID_SETTINGS_TAB: i32 = 101;
 pub const ID_REFRESH: i32 = 102;
 pub const ID_ABOUT: i32 = 103;
 pub const ID_ABOUT_CLOSE: i32 = 281;
-pub const ID_ABOUT_RECORDINGS: i32 = 282;
+pub const ID_ABOUT_SITE: i32 = 282;
 pub const ID_ABOUT_LOGS: i32 = 283;
 pub const ID_ABOUT_GITHUB: i32 = 284;
 pub const ID_ABOUT_UPDATE: i32 = 287;
 pub const ID_SOURCE_CLOSE: i32 = 285;
-pub const ID_COPY_OUTPUT: i32 = 286;
-pub const ID_OPEN_OUTPUT: i32 = 292;
 pub const ID_CAMERA_PHOTO: i32 = 289;
 pub const ID_CAMERA_VIDEO: i32 = 290;
 pub const ID_CAMERA_CLOSE: i32 = 291;
+pub const ID_FOLDER_DEFAULT: i32 = 300;
+pub const ID_FOLDER_SCREENSHOTS: i32 = 301;
+pub const ID_FOLDER_VIDEO: i32 = 302;
+pub const ID_FOLDER_CAMERA: i32 = 303;
+pub const ID_FOLDER_AUDIO: i32 = 304;
+pub const ID_FOLDER_DEFAULT_RESET: i32 = 310;
+pub const ID_FOLDER_SCREENSHOTS_RESET: i32 = 311;
+pub const ID_FOLDER_VIDEO_RESET: i32 = 312;
+pub const ID_FOLDER_CAMERA_RESET: i32 = 313;
+pub const ID_FOLDER_AUDIO_RESET: i32 = 314;
 pub const CAMERA_ROW_BASE: i32 = 500;
 pub const SOURCE_ROW_BASE: i32 = 400;
 pub const ID_FORMAT: i32 = 110;
@@ -229,6 +237,26 @@ pub fn history_click(id: i32) -> Option<(usize, HistoryClick)> {
     } else {
         index(ID_HISTORY_OPEN).map(|index| (index, HistoryClick::Open))
     }
+}
+
+/// The file kind a folder control changes, and whether it resets that kind to
+/// the default folder instead of opening the picker.
+pub fn folder_control(id: i32) -> Option<(media::OutputCategory, bool)> {
+    const ROWS: [media::OutputCategory; 5] = [
+        media::OutputCategory::Default,
+        media::OutputCategory::Screenshots,
+        media::OutputCategory::Video,
+        media::OutputCategory::Camera,
+        media::OutputCategory::Sound,
+    ];
+    let (base, reset) = match id {
+        ID_FOLDER_DEFAULT..=ID_FOLDER_AUDIO => (ID_FOLDER_DEFAULT, false),
+        ID_FOLDER_DEFAULT_RESET..=ID_FOLDER_AUDIO_RESET => (ID_FOLDER_DEFAULT_RESET, true),
+        _ => return None,
+    };
+    ROWS.get((id - base) as usize)
+        .copied()
+        .map(|category| (category, reset))
 }
 
 #[derive(Debug)]
@@ -708,18 +736,19 @@ fn sync_labels(ui: &MainWindow) {
     labels.set_screenshot_source(tr("Screenshot source").into());
     labels.set_screenshots(tr("Screenshots").into());
     labels.set_video_recording(tr("Video recording").into());
+    labels.set_video_animations(tr("Video and animation").into());
     labels.set_close(tr("Close").into());
     labels.set_about_note(tr("Capture Button records the screen, a region or sound and keeps the last twelve files in the folder below.").into());
     labels.set_licenses(tr("Licenses").into());
     labels.set_license_text(tr("FFmpeg and x264 are distributed under the GNU GPL v2 or later. Icons from Phosphor Icons are MIT licensed. Other library and crate notices are in NOTICE and THIRD-PARTY.txt next to the program.").into());
     labels.set_github("GitHub".into());
-    labels.set_open_recordings(tr("Open recordings").into());
+    labels.set_site(tr("Site").into());
     labels.set_open_logs(tr("Open logs").into());
+    labels.set_file_locations(tr("File locations").into());
+    labels.set_default_folder(tr("Default folder").into());
+    labels.set_change(tr("Change").into());
+    labels.set_reset(tr("Reset").into());
     labels.set_about_version(format!("Capture Button {}", env!("CARGO_PKG_VERSION")).into());
-    let output = media::output_dir()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|error| error);
-    labels.set_output_path(trf("Folder: {path}", &[("path", &output)]).into());
 }
 
 fn bind(ui: &MainWindow, controls: &Controls) {
@@ -896,25 +925,16 @@ fn sync(ui: &MainWindow, model: &Model) {
             .map(slint::SharedString::from)
             .collect::<Vec<_>>(),
     )));
-    ui.set_about_recordings(
-        trf(
-            "Recordings: {path}",
-            &[(
-                "path",
-                &media::output_dir()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|error| error),
-            )],
-        )
-        .into(),
-    );
-    ui.set_about_logs(
-        trf(
-            "Logs: {path}",
-            &[("path", &crate::logging::dir().display().to_string())],
-        )
-        .into(),
-    );
+    ui.set_folder_default(model.folders[4].clone().into());
+    ui.set_folder_screenshots(model.folders[0].clone().into());
+    ui.set_folder_video(model.folders[1].clone().into());
+    ui.set_folder_camera(model.folders[2].clone().into());
+    ui.set_folder_audio(model.folders[3].clone().into());
+    ui.set_default_folder_custom(model.folder_custom[4]);
+    ui.set_screenshot_folder_custom(model.folder_custom[0]);
+    ui.set_video_folder_custom(model.folder_custom[1]);
+    ui.set_camera_folder_custom(model.folder_custom[2]);
+    ui.set_audio_folder_custom(model.folder_custom[3]);
 
     let mut names = vec![slint::SharedString::from(tr("System"))];
     names.extend(
@@ -989,6 +1009,8 @@ struct Model {
     language: usize,
     sound_volume: u32,
     gains: [u32; 4],
+    folders: [String; 5],
+    folder_custom: [bool; 5],
     devices: [Vec<media::AudioDevice>; 4],
     device_index: [usize; 4],
     history: Vec<String>,
@@ -1300,6 +1322,7 @@ impl Controls {
             model.load_audio(1, &settings.tray_area.audio);
             model.load_audio(2, &settings.tray_video.audio);
             model.load_audio(3, &settings.tray_audio);
+            model.load_folders(&settings.folders);
             for (id, value) in [
                 (ID_AUTOSTART, settings.autostart),
                 (ID_START_MINIMIZED, settings.start_minimized),
@@ -1337,6 +1360,10 @@ impl Controls {
 
     pub fn load_tray(&mut self, settings: &Settings, area: bool) {
         self.update(|model| model.load_tray(settings, area));
+    }
+
+    pub fn set_folders(&self, folders: &media::OutputFolders) {
+        self.update(|model| model.load_folders(folders));
     }
 
     pub fn read_ui(&mut self, settings: &mut Settings, persist: bool) {
@@ -1477,6 +1504,16 @@ impl Model {
         self.resolution = resolution_index(video.height);
         self.fps[0] = video.fps;
         self.preset = preset_index(settings.format, video);
+    }
+
+    fn load_folders(&mut self, folders: &media::OutputFolders) {
+        for category in media::OutputCategory::ALL {
+            let index = category.index();
+            self.folder_custom[index] = folders.is_custom(category);
+            self.folders[index] = media::output_dir_for(category)
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|error| error);
+        }
     }
 
     fn load_tray(&mut self, settings: &Settings, area: bool) {

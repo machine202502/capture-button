@@ -875,11 +875,16 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
         return Err(tr("Capture area is too small"));
     }
     let output = if options.audio_only {
-        media::output_path("Audio", "mp3")?
+        media::output_path(media::OutputCategory::Sound, "Audio", "mp3")?
     } else if options.camera.is_some() {
-        media::output_path("Camera", options.profile.format.extension())?
+        media::output_path(
+            media::OutputCategory::Camera,
+            "Camera",
+            options.profile.format.extension(),
+        )?
     } else {
         media::output_path(
+            media::OutputCategory::Video,
             if options.profile.format == Format::Mkv {
                 "Video"
             } else {

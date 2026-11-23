@@ -408,7 +408,7 @@ impl Region {
         let path = if choose_path {
             save_dialog()
         } else {
-            media::output_path("Image", "png").ok()
+            media::output_path(media::OutputCategory::Screenshots, "Image", "png").ok()
         };
         let Some(path) = path else { return };
         match media::save_frame(&frame, &path) {
@@ -1651,7 +1651,7 @@ fn monitor_rects() -> Vec<Rect> {
 }
 
 fn suggested_image_path() -> String {
-    media::output_path("Image", "png")
+    media::output_path(media::OutputCategory::Screenshots, "Image", "png")
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| "Image.png".into())
 }

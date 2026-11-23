@@ -5,7 +5,7 @@ use ffmpeg::{
 use ffmpeg_next as ffmpeg;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
@@ -229,11 +229,89 @@ fn grab_screen(rect: Rect, draw_cursor: bool) -> Result<Frame, String> {
     }
 }
 
-/// The folder where screenshots and recordings are written.
+/// The kind of file a folder setting applies to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OutputCategory {
+    Screenshots,
+    Video,
+    Camera,
+    Sound,
+    /// The folder every other category falls back to.
+    Default,
+}
+
+impl OutputCategory {
+    pub const ALL: [Self; 5] = [
+        Self::Screenshots,
+        Self::Video,
+        Self::Camera,
+        Self::Sound,
+        Self::Default,
+    ];
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Screenshots => 0,
+            Self::Video => 1,
+            Self::Camera => 2,
+            Self::Sound => 3,
+            Self::Default => 4,
+        }
+    }
+}
+
+/// The folders chosen in Settings. `None` keeps the default folder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OutputFolders {
+    paths: [Option<PathBuf>; 5],
+}
+
+impl OutputFolders {
+    pub const EMPTY: Self = Self {
+        paths: [None, None, None, None, None],
+    };
+
+    pub fn get(&self, category: OutputCategory) -> Option<&Path> {
+        self.paths[category.index()].as_deref()
+    }
+
+    pub fn set(&mut self, category: OutputCategory, path: Option<PathBuf>) {
+        self.paths[category.index()] = path;
+    }
+
+    pub fn is_custom(&self, category: OutputCategory) -> bool {
+        self.paths[category.index()].is_some()
+    }
+
+    /// The folder this category uses: its own, or the default folder's.
+    pub fn resolved(&self, category: OutputCategory) -> Option<PathBuf> {
+        self.get(category).map(Path::to_path_buf).or_else(|| {
+            if category == OutputCategory::Default {
+                None
+            } else {
+                self.get(OutputCategory::Default).map(Path::to_path_buf)
+            }
+        })
+    }
+}
+
+static OUTPUT_FOLDERS: Mutex<OutputFolders> = Mutex::new(OutputFolders::EMPTY);
+
+/// Applies the folder settings loaded at startup or changed in the window.
+pub fn set_output_folders(folders: &OutputFolders) {
+    *OUTPUT_FOLDERS.lock().unwrap_or_else(|e| e.into_inner()) = folders.clone();
+}
+
+fn ensure_dir(dir: PathBuf) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    Ok(dir)
+}
+
+/// The folder where screenshots and recordings are written by default.
 pub fn output_dir() -> Result<PathBuf, String> {
     // SAFETY: The folder path from the shell is freed with CoTaskMemFree before this function returns. Only the characters up to the NUL are read.
     unsafe {
-        let raw = SHGetKnownFolderPath(&FOLDERID_Pictures, KNOWN_FOLDER_FLAG(0), None)
+        let raw = SHGetKnownFolderPath(&FOLDERID_Documents, KNOWN_FOLDER_FLAG(0), None)
             .map_err(|e| e.to_string())?;
         let mut len = 0;
         while *raw.0.add(len) != 0 {
@@ -247,8 +325,25 @@ pub fn output_dir() -> Result<PathBuf, String> {
     }
 }
 
-pub fn output_path(kind: &str, extension: &str) -> Result<PathBuf, String> {
-    let dir = output_dir()?;
+/// The folder a file of `category` belongs in: its own folder when chosen, the
+/// default folder when only that one was moved, or the built-in folder.
+pub fn output_dir_for(category: OutputCategory) -> Result<PathBuf, String> {
+    let configured = OUTPUT_FOLDERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .resolved(category);
+    match configured {
+        Some(dir) => ensure_dir(dir),
+        None => output_dir(),
+    }
+}
+
+pub fn output_path(
+    category: OutputCategory,
+    kind: &str,
+    extension: &str,
+) -> Result<PathBuf, String> {
+    let dir = output_dir_for(category)?;
     let time = unsafe {
         // SAFETY: GetLocalTime fills a plain SYSTEMTIME value.
         windows::Win32::System::SystemInformation::GetLocalTime()
@@ -286,7 +381,7 @@ pub fn save_display_screenshot(rect: Rect, path: Option<PathBuf>) -> Result<Path
 fn write_screenshot(frame: Frame, path: Option<PathBuf>) -> Result<PathBuf, String> {
     let path = match path {
         Some(path) => path,
-        None => output_path("Image", "png")?,
+        None => output_path(OutputCategory::Screenshots, "Image", "png")?,
     };
     save_frame(&frame, &path)?;
     Ok(path)
@@ -2181,15 +2276,40 @@ mod tests {
     }
 
     #[test]
+    fn a_category_falls_back_to_the_default_folder() {
+        let mut folders = OutputFolders::EMPTY;
+        folders.set(OutputCategory::Default, Some(PathBuf::from(r"D:\Captures")));
+        assert_eq!(
+            folders.resolved(OutputCategory::Screenshots),
+            Some(PathBuf::from(r"D:\Captures"))
+        );
+        assert_eq!(
+            folders.resolved(OutputCategory::Default),
+            Some(PathBuf::from(r"D:\Captures"))
+        );
+        folders.set(OutputCategory::Camera, Some(PathBuf::from(r"E:\Cam")));
+        assert_eq!(
+            folders.resolved(OutputCategory::Camera),
+            Some(PathBuf::from(r"E:\Cam"))
+        );
+        assert_eq!(
+            folders.resolved(OutputCategory::Video),
+            Some(PathBuf::from(r"D:\Captures"))
+        );
+        assert_eq!(OutputFolders::EMPTY.resolved(OutputCategory::Sound), None);
+    }
+
+    #[test]
     fn output_names_have_the_expected_prefixes() {
-        for (kind, extension, prefix) in [
-            ("Video", "mkv", "Video_"),
-            ("Animation", "gif", "Animation_"),
-            ("Animation", "webp", "Animation_"),
-            ("Image", "png", "Image_"),
-            ("Audio", "mp3", "Audio_"),
+        for (category, kind, extension, prefix) in [
+            (OutputCategory::Video, "Video", "mkv", "Video_"),
+            (OutputCategory::Video, "Animation", "gif", "Animation_"),
+            (OutputCategory::Video, "Animation", "webp", "Animation_"),
+            (OutputCategory::Screenshots, "Image", "png", "Image_"),
+            (OutputCategory::Sound, "Audio", "mp3", "Audio_"),
+            (OutputCategory::Camera, "Camera", "png", "Camera_"),
         ] {
-            let path = output_path(kind, extension).unwrap();
+            let path = output_path(category, kind, extension).unwrap();
             let name = path.file_name().unwrap().to_string_lossy();
             assert!(name.starts_with(prefix), "{name}");
             assert!(name.ends_with(&format!(".{extension}")), "{name}");

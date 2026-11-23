@@ -58,7 +58,7 @@ impl CameraSource {
 pub fn photo(index: &CameraIndex) -> Result<PathBuf, String> {
     let mut source = CameraSource::open(index)?;
     let frame = source.frame()?;
-    let path = media::output_path("Image", "png")?;
+    let path = media::output_path(media::OutputCategory::Camera, "Camera", "png")?;
     media::save_frame(&frame, &path)?;
     Ok(path)
 }

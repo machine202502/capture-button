@@ -26,12 +26,12 @@ use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE,
-    REG_DWORD, REG_OPTION_NON_VOLATILE,
+    REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
-use windows::Win32::UI::Shell::{FOLDERID_Pictures, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG};
+use windows::Win32::UI::Shell::{FOLDERID_Documents, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetClientRect, GetWindowRect, GetWindowTextW,
     GetWindowThreadProcessId, IsWindowVisible, SendMessageW, SetWindowPos, SIZE_RESTORED,
@@ -118,6 +118,38 @@ fn set_test_dword(name: &str, value: u32) {
     }
 }
 
+fn set_test_string(name: &str, value: &str) {
+    let mut key = HKEY::default();
+    let name = wide(name);
+    let data = wide(value);
+    let bytes = unsafe {
+        // SAFETY: The pointer addresses a live buffer, and the length is exactly that buffer's size.
+        std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len() * 2)
+    };
+    unsafe {
+        // SAFETY: The subkey name is NUL-terminated and the returned HKEY is closed below.
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Software\\CaptureButton-test"),
+            0,
+            None,
+            REG_OPTION_NON_VOLATILE,
+            KEY_READ | KEY_WRITE,
+            None,
+            &mut key,
+            None,
+        )
+        .ok()
+        .expect("open the test settings key");
+        // SAFETY: The key is open, the value name is NUL-terminated, and the bytes outlive the call.
+        RegSetValueExW(key, PCWSTR(name.as_ptr()), 0, REG_SZ, Some(bytes))
+            .ok()
+            .expect("write a test setting");
+        // SAFETY: The key was returned by RegCreateKeyExW and is not used afterwards.
+        let _ = RegCloseKey(key).ok();
+    }
+}
+
 fn prepare_settings() {
     prepare_process();
     for (name, value) in [
@@ -141,6 +173,15 @@ fn prepare_settings() {
         ("sound_volume", 50),
     ] {
         set_test_dword(name, value);
+    }
+    for name in [
+        "folder_default",
+        "folder_screenshots",
+        "folder_video",
+        "folder_camera",
+        "folder_sound",
+    ] {
+        set_test_string(name, "");
     }
 }
 
@@ -191,11 +232,11 @@ fn resize(slint: HWND, width: i32, height: i32) {
 }
 
 fn output_dir() -> PathBuf {
-    let pictures = unsafe {
+    let documents = unsafe {
         // SAFETY: The shell returns a COM-allocated NUL-terminated string; it is freed below.
-        SHGetKnownFolderPath(&FOLDERID_Pictures, KNOWN_FOLDER_FLAG(0), None).ok()
+        SHGetKnownFolderPath(&FOLDERID_Documents, KNOWN_FOLDER_FLAG(0), None).ok()
     };
-    if let Some(raw) = pictures {
+    if let Some(raw) = documents {
         let mut len = 0;
         // SAFETY: The string is NUL-terminated and owned by the buffer returned above.
         while unsafe { *raw.0.add(len) } != 0 {
@@ -208,7 +249,7 @@ fn output_dir() -> PathBuf {
         return PathBuf::from(text).join("CaptureButton");
     }
     PathBuf::from(std::env::var_os("USERPROFILE").expect("USERPROFILE"))
-        .join("Pictures")
+        .join("Documents")
         .join("CaptureButton")
 }
 

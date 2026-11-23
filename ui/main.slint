@@ -88,16 +88,18 @@ export global Labels {
     in property <string> screenshot_source: "";
     in property <string> screenshots: "";
     in property <string> video_recording: "";
-    in property <string> output_path: "";
+    in property <string> video_animations: "";
+    in property <string> file_locations: "";
+    in property <string> default_folder: "";
+    in property <string> change: "";
+    in property <string> reset: "";
     in property <string> close: "";
     in property <string> about_version: "";
-    in property <string> about_recordings: "";
-    in property <string> about_logs: "";
     in property <string> about_note: "";
-    in property <string> open_recordings: "";
     in property <string> open_logs: "";
     in property <string> licenses: "";
     in property <string> license_text: "";
+    in property <string> site: "";
     in property <string> github: "";
 }
 
@@ -292,35 +294,6 @@ component Card inherits Rectangle {
     }
 }
 
-component CopyIcon inherits Rectangle {
-    callback clicked;
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
-    background: ta.has-hover ? Palette.hover : transparent;
-
-    Rectangle {
-        x: 8px;
-        y: 9px;
-        width: 8px;
-        height: 10px;
-        border-width: 1px;
-        border-color: Palette.accent;
-        border-radius: 2px;
-    }
-    Rectangle {
-        x: 11px;
-        y: 6px;
-        width: 8px;
-        height: 10px;
-        border-width: 1px;
-        border-color: Palette.accent;
-        border-radius: 2px;
-        background: Palette.card;
-    }
-    ta := TouchArea { clicked => { root.clicked(); } }
-}
-
 component MiniLink inherits Rectangle {
     in property <string> label;
     in property <bool> enabled: true;
@@ -429,8 +402,16 @@ export component MainWindow inherits Window {
     private property <length> half: (root.width - 90px * ui-scale) / 2;
     in-out property <[string]> source-monitor-items: [];
     in-out property <[string]> source-window-items: [];
-    in-out property <string> about-recordings: "";
-    in-out property <string> about-logs: "";
+    in-out property <string> folder-default: "";
+    in-out property <string> folder-screenshots: "";
+    in-out property <string> folder-video: "";
+    in-out property <string> folder-camera: "";
+    in-out property <string> folder-audio: "";
+    in-out property <bool> default-folder-custom: false;
+    in-out property <bool> screenshot-folder-custom: false;
+    in-out property <bool> video-folder-custom: false;
+    in-out property <bool> camera-folder-custom: false;
+    in-out property <bool> audio-folder-custom: false;
 
     callback act(int);
     callback toggle(int);
@@ -563,27 +544,6 @@ export component MainWindow inherits Window {
                             Chip { width: root.triple; label: "MKV"; active: root.format == 0; clicked => { root.format = 0; root.act(110); } }
                             Chip { width: root.triple; label: "GIF"; active: root.format == 1; clicked => { root.format = 1; root.act(111); } }
                             Chip { width: root.triple; label: "WebP"; active: root.format == 2; clicked => { root.format = 2; root.act(112); } }
-                        }
-                        HorizontalLayout {
-                            spacing: 4px * ui-scale;
-                            Rectangle {
-                                height: 16px * ui-scale;
-                                horizontal-stretch: 1;
-                                clip: true;
-                                background: transparent;
-
-                                Text {
-                                    width: parent.width;
-                                    text: Labels.output_path;
-                                    color: Palette.muted;
-                                    font-size: 10px * ui-scale;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-
-                                TouchArea { clicked => { root.act(292); } }
-                            }
-                            CopyIcon { clicked => { root.act(286); } }
                         }
                     }
 
@@ -889,6 +849,66 @@ export component MainWindow inherits Window {
                             Text { text: root.sound-volume + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
                     }
+
+                    Card {
+                        SectionTitle { text: Labels.file_locations; }
+
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 1px * ui-scale;
+                                Text { text: Labels.default_folder; color: Palette.ink; font-size: 12px * ui-scale; font-weight: 600; }
+                                Text { text: root.folder-default; color: Palette.muted; font-size: 10px * ui-scale; overflow: elide; }
+                            }
+                            OceanButton { width: 96px * ui-scale; height: 28px * ui-scale; label: Labels.change; clicked => { root.act(300); } }
+                            OceanButton { width: 80px * ui-scale; height: 28px * ui-scale; label: Labels.reset; enabled: root.default-folder-custom; clicked => { root.act(310); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 1px * ui-scale;
+                                Text { text: Labels.screenshots; color: Palette.ink; font-size: 12px * ui-scale; font-weight: 600; }
+                                Text { text: root.folder-screenshots; color: Palette.muted; font-size: 10px * ui-scale; overflow: elide; }
+                            }
+                            OceanButton { width: 96px * ui-scale; height: 28px * ui-scale; label: Labels.change; clicked => { root.act(301); } }
+                            OceanButton { width: 80px * ui-scale; height: 28px * ui-scale; label: Labels.reset; enabled: root.screenshot-folder-custom; clicked => { root.act(311); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 1px * ui-scale;
+                                Text { text: Labels.video_animations; color: Palette.ink; font-size: 12px * ui-scale; font-weight: 600; }
+                                Text { text: root.folder-video; color: Palette.muted; font-size: 10px * ui-scale; overflow: elide; }
+                            }
+                            OceanButton { width: 96px * ui-scale; height: 28px * ui-scale; label: Labels.change; clicked => { root.act(302); } }
+                            OceanButton { width: 80px * ui-scale; height: 28px * ui-scale; label: Labels.reset; enabled: root.video-folder-custom; clicked => { root.act(312); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 1px * ui-scale;
+                                Text { text: Labels.camera; color: Palette.ink; font-size: 12px * ui-scale; font-weight: 600; }
+                                Text { text: root.folder-camera; color: Palette.muted; font-size: 10px * ui-scale; overflow: elide; }
+                            }
+                            OceanButton { width: 96px * ui-scale; height: 28px * ui-scale; label: Labels.change; clicked => { root.act(303); } }
+                            OceanButton { width: 80px * ui-scale; height: 28px * ui-scale; label: Labels.reset; enabled: root.camera-folder-custom; clicked => { root.act(313); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 1px * ui-scale;
+                                Text { text: Labels.audio; color: Palette.ink; font-size: 12px * ui-scale; font-weight: 600; }
+                                Text { text: root.folder-audio; color: Palette.muted; font-size: 10px * ui-scale; overflow: elide; }
+                            }
+                            OceanButton { width: 96px * ui-scale; height: 28px * ui-scale; label: Labels.change; clicked => { root.act(304); } }
+                            OceanButton { width: 80px * ui-scale; height: 28px * ui-scale; label: Labels.reset; enabled: root.audio-folder-custom; clicked => { root.act(314); } }
+                        }
+                    }
                 }
             }
         }
@@ -1079,7 +1099,7 @@ export component MainWindow inherits Window {
                 Rectangle { vertical-stretch: 1; }
                 HorizontalLayout {
                     spacing: 6px * ui-scale;
-                    OceanButton { width: root.about-quad; label: Labels.open_recordings; clicked => { root.act(282); } }
+                    OceanButton { width: root.about-quad; label: Labels.site; clicked => { root.act(282); } }
                     OceanButton { width: root.about-quad; label: Labels.open_logs; clicked => { root.act(283); } }
                     OceanButton { width: root.about-quad; label: Labels.github; clicked => { root.act(284); } }
                     OceanButton {

@@ -28,6 +28,7 @@ use ui::*;
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, IBindCtx, CLSCTX_ALL};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::*;
 use windows::Win32::UI::Controls::{
@@ -40,6 +41,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 const CLASS: PCWSTR = w!("CaptureButton.window");
 const TITLE: PCWSTR = w!("Capture Button");
 const REPOSITORY: &str = "https://github.com/machine202502/capture-button";
+const WEBSITE: &str = "https://machine202502.github.io/capture-button/";
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_REGION: u32 = WM_APP + 2;
 const WM_ACTIVATE_APP: u32 = WM_APP + 3;
@@ -163,15 +165,14 @@ fn accepts_command(mode: Mode, id: i32, region_open: bool) -> bool {
                 | ID_STATUS
                 | ID_ABOUT
                 | ui::ID_ABOUT_CLOSE
-                | ui::ID_ABOUT_RECORDINGS
+                | ui::ID_ABOUT_SITE
                 | ui::ID_ABOUT_LOGS
                 | ui::ID_ABOUT_GITHUB
                 | ui::ID_ABOUT_UPDATE
-                | ui::ID_COPY_OUTPUT
-                | ui::ID_OPEN_OUTPUT
                 | ui::ID_SOURCE_CLOSE
                 | ui::ID_CAMERA_CLOSE
         )
+        || ui::folder_control(id).is_some()
         || (ui::SOURCE_ROW_BASE..ui::CAMERA_ROW_BASE).contains(&id)
         || (ui::CAMERA_ROW_BASE..600).contains(&id)
         || ui::history_click(id).is_some()
@@ -437,6 +438,7 @@ struct App {
 impl App {
     fn new(hwnd: HWND) -> Self {
         let settings = Settings::load();
+        media::set_output_folders(&settings.folders);
         Self {
             hwnd,
             controls: Controls::new(),
@@ -761,26 +763,9 @@ impl App {
             }
             ui::ID_ABOUT_UPDATE => update::install(self.controls.clone()),
             ui::ID_ABOUT_CLOSE => self.controls.show_about(false),
-            ui::ID_ABOUT_RECORDINGS => {
-                if let Ok(path) = media::output_dir() {
-                    let _ = std::process::Command::new("explorer.exe").arg(path).spawn();
-                }
-            }
+            ui::ID_ABOUT_SITE => open_url(self.hwnd, WEBSITE),
             ui::ID_ABOUT_LOGS => logging::open_dir(),
-            ui::ID_ABOUT_GITHUB => {
-                let url = wide(REPOSITORY);
-                unsafe {
-                    // SAFETY: The URL is NUL-terminated and the owner window belongs to this program.
-                    ShellExecuteW(
-                        self.hwnd,
-                        w!("open"),
-                        PCWSTR(url.as_ptr()),
-                        None,
-                        None,
-                        SW_SHOWNORMAL,
-                    );
-                }
-            }
+            ui::ID_ABOUT_GITHUB => open_url(self.hwnd, REPOSITORY),
             ID_PRESET if notification == CBN_SELCHANGE as u16 => {
                 self.controls.apply_preset(&mut self.settings)
             }
@@ -835,8 +820,14 @@ impl App {
             ID_SHOT_SCREEN | ID_TRAY_SHOT => self.screenshot_screen(),
             ID_SHOT_SOURCE => self.capture_source(true),
             ui::ID_SOURCE_CLOSE => self.controls.close_sources(),
-            ui::ID_COPY_OUTPUT => self.copy_output(),
-            ui::ID_OPEN_OUTPUT => self.open_output(),
+            id if ui::folder_control(id).is_some() => {
+                let (category, reset) = ui::folder_control(id).expect("folder control");
+                if reset {
+                    self.set_folder(category, None);
+                } else {
+                    self.choose_folder(category);
+                }
+            }
             ui::ID_CAMERA_PHOTO => self.camera_action(true),
             ui::ID_CAMERA_VIDEO => self.camera_action(false),
             ui::ID_CAMERA_CLOSE => self.controls.close_cameras(),
@@ -1044,10 +1035,11 @@ impl App {
     }
 
     fn save_frame(&mut self, frame: media::Frame) {
-        let saved = media::output_path("Image", "png").and_then(|path| {
-            media::save_frame(&frame, &path)?;
-            Ok(path)
-        });
+        let saved = media::output_path(media::OutputCategory::Screenshots, "Image", "png")
+            .and_then(|path| {
+                media::save_frame(&frame, &path)?;
+                Ok(path)
+            });
         match saved {
             Ok(path) => self.screenshot_saved(path),
             Err(error) => self.error(&error),
@@ -1492,27 +1484,20 @@ impl App {
         self.reveal(path);
     }
 
-    fn open_output(&mut self) {
-        let result = media::output_dir().and_then(|dir| {
-            std::process::Command::new("explorer.exe")
-                .arg(dir)
-                .spawn()
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        });
-        match result {
-            Ok(()) => logging::info("opened output folder"),
-            Err(error) => self.error(&error),
-        }
+    fn choose_folder(&mut self, category: media::OutputCategory) {
+        let start = media::output_dir_for(category).ok();
+        let owner = dialog_owner(self.hwnd);
+        let Some(path) = pick_folder(owner, start.as_deref()) else {
+            return;
+        };
+        self.set_folder(category, Some(path));
     }
 
-    fn copy_output(&mut self) {
-        let result = media::output_dir()
-            .and_then(|dir| media::copy_text_to_clipboard(&dir.display().to_string()));
-        match result {
-            Ok(()) => logging::info("copied output folder"),
-            Err(error) => self.error(&error),
-        }
+    fn set_folder(&mut self, category: media::OutputCategory, path: Option<PathBuf>) {
+        self.settings.folders.set(category, path);
+        media::set_output_folders(&self.settings.folders);
+        self.settings.save();
+        self.controls.set_folders(&self.settings.folders);
     }
 
     fn copy_text(&mut self, path: &std::path::Path) {
@@ -2246,6 +2231,76 @@ fn trim_working_set() {
         // SAFETY: The handle is the current process, and both sizes are SIZE_T(-1),
         // which asks the system to trim the working set.
         SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX).ok();
+    }
+}
+
+fn open_url(owner: HWND, url: &str) {
+    let url = wide(url);
+    unsafe {
+        // SAFETY: The URL buffer is NUL-terminated and outlives the call; the
+        // owner window belongs to this program.
+        ShellExecuteW(
+            owner,
+            w!("open"),
+            PCWSTR(url.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+/// The visible window when this process owns the foreground, so the folder
+/// picker centers on it instead of on the hidden command window.
+fn dialog_owner(fallback: HWND) -> HWND {
+    unsafe {
+        // SAFETY: Both calls only read process-wide window state, and the pid
+        // pointer is a writable local.
+        let foreground = GetForegroundWindow();
+        if foreground.is_invalid() || !IsWindowVisible(foreground).as_bool() {
+            return fallback;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(foreground, Some(&mut pid));
+        if pid == GetCurrentProcessId() {
+            foreground
+        } else {
+            fallback
+        }
+    }
+}
+
+/// Asks for a folder with the standard Windows picker. A cancel or a shell
+/// error leaves the setting unchanged.
+fn pick_folder(owner: HWND, start: Option<&std::path::Path>) -> Option<PathBuf> {
+    unsafe {
+        // SAFETY: COM is initialized for this thread in `main`; every interface
+        // pointer below is a COM object owned by this function.
+        let dialog: IFileOpenDialog = CoCreateInstance(
+            &FileOpenDialog,
+            None::<&windows::core::IUnknown>,
+            CLSCTX_ALL,
+        )
+        .ok()?;
+        let options = dialog.GetOptions().unwrap_or_default();
+        dialog
+            .SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)
+            .ok()?;
+        if let Some(start) = start {
+            let start = wide(&start.display().to_string());
+            if let Ok(item) = SHCreateItemFromParsingName::<PCWSTR, Option<&IBindCtx>, IShellItem>(
+                PCWSTR(start.as_ptr()),
+                None,
+            ) {
+                dialog.SetFolder(&item).ok();
+            }
+        }
+        dialog.Show(owner).ok()?;
+        let item = dialog.GetResult().ok()?;
+        let name = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let path = name.to_string().ok();
+        CoTaskMemFree(Some(name.0.cast()));
+        path.map(PathBuf::from)
     }
 }
 

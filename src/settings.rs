@@ -169,6 +169,8 @@ pub struct Settings {
     pub scale: u32,
     /// Interface language code; empty follows the Windows language.
     pub ui_language: String,
+    /// Folders chosen for each kind of file; empty slots use the default folder.
+    pub folders: media::OutputFolders,
 }
 
 impl Default for Settings {
@@ -193,6 +195,7 @@ impl Default for Settings {
             threads: 0,
             scale: 0,
             ui_language: String::new(),
+            folders: media::OutputFolders::EMPTY,
         }
     }
 }
@@ -381,6 +384,14 @@ impl Settings {
         settings.show_card = registry.dword("show_card", 1) != 0;
         settings.threads = registry.dword("threads", 0);
         settings.scale = registry.dword("scale", 0);
+        for category in media::OutputCategory::ALL {
+            let value = registry.string(folder_key(category), "");
+            if !value.is_empty() {
+                settings
+                    .folders
+                    .set(category, Some(std::path::PathBuf::from(value)));
+            }
+        }
         for source in ProfileRef::ALL {
             validate_audio_device(settings.audio_mut(source));
         }
@@ -471,7 +482,25 @@ impl Settings {
         registry.set_dword("threads", self.threads);
         registry.set_dword("scale", self.scale);
         registry.set_string("ui_language", &self.ui_language);
+        for category in media::OutputCategory::ALL {
+            let value = self
+                .folders
+                .get(category)
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            registry.set_string(folder_key(category), &value);
+        }
         update_autostart(self.autostart, self.start_minimized);
+    }
+}
+
+fn folder_key(category: media::OutputCategory) -> &'static str {
+    match category {
+        media::OutputCategory::Screenshots => "folder_screenshots",
+        media::OutputCategory::Video => "folder_video",
+        media::OutputCategory::Camera => "folder_camera",
+        media::OutputCategory::Sound => "folder_sound",
+        media::OutputCategory::Default => "folder_default",
     }
 }
 
