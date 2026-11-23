@@ -126,17 +126,27 @@ function New-ThirdPartyNotice {
     foreach ($node in $meta.resolve.nodes) { $nodes[$node.id] = $node }
     $pkgs = @{}
     foreach ($pkg in $meta.packages) { $pkgs[$pkg.id] = $pkg }
+    # A virtual workspace has an empty resolve.root, so treat every member as a root.
+    $rootIds = @{}
+    if ($meta.resolve.root) {
+        $rootIds[[string]$meta.resolve.root] = $true
+    }
+    else {
+        foreach ($member in @($meta.workspace_members)) { $rootIds[[string]$member] = $true }
+    }
+    if ($rootIds.Count -eq 0) { throw "cargo metadata reported no workspace roots" }
     $queue = New-Object System.Collections.Generic.Queue[string]
-    $queue.Enqueue([string]$meta.resolve.root)
+    foreach ($root in $rootIds.Keys) { $queue.Enqueue([string]$root) }
     $seen = @{}
     $crates = @()
     while ($queue.Count -gt 0) {
         $id = $queue.Dequeue()
         if ($seen.ContainsKey($id)) { continue }
         $seen[$id] = $true
+        $isRoot = $rootIds.ContainsKey($id)
         $node = $nodes[$id]
-        if ($id -ne $meta.resolve.root -and (Test-ProcMacroOnly $pkgs[$id])) { continue }
-        if ($id -ne $meta.resolve.root) { $crates += $pkgs[$id] }
+        if (-not $isRoot -and (Test-ProcMacroOnly $pkgs[$id])) { continue }
+        if (-not $isRoot) { $crates += $pkgs[$id] }
         foreach ($dep in @($node.deps)) {
             $take = $false
             foreach ($kind in @($dep.dep_kinds)) {

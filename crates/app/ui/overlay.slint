@@ -1,0 +1,386 @@
+// The Slint area-selection overlay.
+//
+// The window draws nothing by itself: `crates/app/src/overlay.rs` builds the
+// scene from `platform_core::region::Model` and pushes it into the properties
+// below. Keeping every coordinate in the model (and every rule in the model)
+// means this file is a renderer only, and the native GDI overlay keeps the
+// behaviour it always had.
+//
+// Phosphor is embedded so the tool and action buttons use the same glyphs as
+// the native overlay; it is not installed on the machine.
+
+import "../../../assets/Phosphor.ttf";
+
+/// A point in the window.
+export struct OverlayPoint {
+    x: length,
+    y: length,
+}
+
+/// A rectangle in the window.
+export struct OverlayRect {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+}
+
+/// One button of the overlay: a rounded pill with a glyph, and a caption when
+/// the role has one.
+export struct OverlayButton {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    fill: color,
+    ink: color,
+    edge: color,
+    glyph: string,
+    caption: string,
+    /// 0 none, 1 the ink dot of the colour tool, 2 the stroke of the width
+    /// tool, 3 a colour swatch.
+    special: int,
+    dot: color,
+    stroke-width: length,
+    swatch-on: bool,
+}
+
+/// One annotation. `kind` is 0 for a stroked path, 1 for a filled path, 2 for
+/// text and 3 for a dot.
+export struct OverlayShape {
+    kind: int,
+    commands: string,
+    color: color,
+    stroke-width: length,
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    text: string,
+    font-size: length,
+    radius: length,
+}
+
+component OverlayShapeView inherits Rectangle {
+    in property <OverlayShape> shape;
+    width: 100%;
+    height: 100%;
+
+    if shape.kind == 3 : Rectangle {
+        x: shape.x - shape.radius;
+        y: shape.y - shape.radius;
+        width: shape.radius * 2;
+        height: shape.radius * 2;
+        border-radius: shape.radius;
+        background: shape.color;
+    }
+
+    if shape.kind == 2 : Text {
+        x: shape.x;
+        y: shape.y;
+        width: max(shape.width, 1px);
+        text: shape.text;
+        color: shape.color;
+        font-size: shape.font-size;
+        font-family: "Segoe UI";
+        wrap: word-wrap;
+        horizontal-alignment: left;
+        vertical-alignment: top;
+    }
+
+    if shape.kind == 0 || shape.kind == 1 : Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        commands: shape.commands;
+        stroke: shape.kind == 0 ? shape.color : transparent;
+        stroke-width: shape.stroke-width;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        fill: shape.kind == 1 ? shape.color : transparent;
+        clip: false;
+    }
+}
+
+export component OverlayWindow inherits Window {
+    /// The frozen screen, one pixel per window pixel.
+    in property <image> frame-image;
+    /// The dark cover outside the selection.
+    in property <[OverlayRect]> dims;
+    /// The selection border.
+    in property <[OverlayRect]> borders;
+    /// The eight resize handles of the selection.
+    in property <[OverlayPoint]> handles;
+    in property <length> handle-size: 10px;
+    in property <[OverlayButton]> buttons;
+    in property <[OverlayShape]> shapes;
+
+    in property <bool> has-badge: false;
+    in property <OverlayRect> badge;
+    in property <string> badge-text: "";
+
+    in property <string> hint-text: "";
+
+    /// The text box, placed at the model's edit box; its frame is the same box
+    /// grown by `text-pad`.
+    in property <bool> has-editor: false;
+    in property <OverlayRect> editor;
+    in property <length> editor-font-size: 18px;
+    in property <color> editor-ink: #ffffff;
+    in-out property <string> editor-text: "";
+
+    in property <length> glyph-size: 17px;
+    in property <length> label-size: 15px;
+    in property <length> text-pad: 8px;
+    /// One model pixel in logical units: the chrome constants below are the
+    /// native overlay's screen pixels, and Slint lengths are logical.
+    in property <float> unit: 1;
+
+    in property <color> accent: #0e7490;
+    in property <color> white: #ffffff;
+    in property <color> badge-fill: #0f3039;
+    in property <color> badge-ink: #ffffff;
+    in property <color> hint-ink: #ffffff;
+    in property <color> hint-shadow: #07191e;
+    /// Slint writes a translucent color as `#RRGGBBAA`, so the alpha is last:
+    /// the same 120/255 black the native overlay blends over the screen.
+    in property <color> dim: #00000078;
+
+    callback pointer-down(x: int, y: int, middle: bool);
+    callback pointer-move(x: int, y: int);
+    callback pointer-up(x: int, y: int);
+    callback key-event(text: string, control: bool, shift: bool);
+    callback commit-text(text: string);
+    callback cancel-text();
+    callback focus-keys();
+
+    title: "Capture Button area";
+    no-frame: true;
+    always-on-top: true;
+    background: #000000;
+
+    // Input first, so the pointer reaches it whatever is drawn on top; the
+    // other elements are shapes and text, which never take the mouse.
+    TouchArea {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.pointer-down(round(self.mouse-x / 1px), round(self.mouse-y / 1px), event.button == PointerEventButton.middle);
+            } else if (event.kind == PointerEventKind.up) {
+                root.pointer-up(round(self.mouse-x / 1px), round(self.mouse-y / 1px));
+            } else if (event.kind == PointerEventKind.move || event.kind == PointerEventKind.cancel) {
+                root.pointer-move(round(self.mouse-x / 1px), round(self.mouse-y / 1px));
+            }
+        }
+    }
+
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        init => {
+            self.focus();
+        }
+        key-pressed(event) => {
+            root.key-event(event.text, event.modifiers.control, event.modifiers.shift);
+            return EventResult.accept;
+        }
+    }
+
+    Image {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        source: root.frame-image;
+        image-fit: fill;
+    }
+
+    for area in root.dims : Rectangle {
+        x: area.x;
+        y: area.y;
+        width: area.width;
+        height: area.height;
+        background: root.dim;
+    }
+
+    for shape in root.shapes : OverlayShapeView {
+        shape: shape;
+    }
+
+    for area in root.borders : Rectangle {
+        x: area.x;
+        y: area.y;
+        width: area.width;
+        height: area.height;
+        border-width: 2px * root.unit;
+        border-color: root.accent;
+        background: transparent;
+    }
+
+    for point in root.handles : Rectangle {
+        x: point.x - root.handle-size / 2;
+        y: point.y - root.handle-size / 2;
+        width: root.handle-size;
+        height: root.handle-size;
+        background: root.accent;
+    }
+
+    if root.has-badge : Rectangle {
+        x: root.badge.x;
+        y: root.badge.y;
+        // The text decides the box so a long "1234 ? 567" never clips; the
+        // model's own size is only a floor, because it comes from a text-width
+        // estimate.
+        width: max(root.badge.width, badge-label.width + 16px * root.unit);
+        height: max(root.badge.height, badge-label.height + 8px * root.unit);
+        border-radius: 6px * root.unit;
+        background: root.badge-fill;
+        badge-label := Text {
+            x: 8px * root.unit;
+            y: 0;
+            text: root.badge-text;
+            color: root.badge-ink;
+            font-size: root.label-size;
+            font-family: "Segoe UI";
+            horizontal-alignment: left;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.hint-text != "" : Text {
+        x: 40px * root.unit;
+        y: 0;
+        width: root.width - 80px * root.unit;
+        height: root.height;
+        text: root.hint-text;
+        color: root.hint-ink;
+        font-size: root.label-size;
+        font-family: "Segoe UI";
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    for button in root.buttons : Rectangle {
+        x: button.x;
+        y: button.y;
+        width: button.width;
+        height: button.height;
+        border-radius: button.height / 2;
+        background: button.fill;
+        border-width: 1px * root.unit;
+        border-color: button.edge;
+
+        if button.special == 1 : Rectangle {
+            x: (parent.width - 16px * root.unit) / 2;
+            y: (parent.height - 16px * root.unit) / 2;
+            width: 16px * root.unit;
+            height: 16px * root.unit;
+            border-radius: 8px * root.unit;
+            background: button.dot;
+            border-width: 2px * root.unit;
+            border-color: root.white;
+        }
+
+        if button.special == 2 : Rectangle {
+            x: 8px * root.unit;
+            y: (parent.height - button.stroke-width) / 2;
+            width: max(parent.width - 16px * root.unit, 0px);
+            height: button.stroke-width;
+            background: button.ink;
+        }
+
+        if button.special == 3 && button.swatch-on : Rectangle {
+            x: 3px * root.unit;
+            y: 2px * root.unit;
+            width: parent.width - 6px * root.unit;
+            height: parent.height - 4px * root.unit;
+            border-radius: 4px * root.unit;
+            background: transparent;
+            border-width: 2px * root.unit;
+            border-color: root.white;
+        }
+
+        if button.caption == "" : Text {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            text: button.glyph;
+            color: button.ink;
+            font-size: root.glyph-size;
+            font-family: "Phosphor";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        if button.caption != "" : HorizontalLayout {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            alignment: center;
+            spacing: 6px * root.unit;
+            Text {
+                text: button.glyph;
+                color: button.ink;
+                font-size: root.glyph-size;
+                font-family: "Phosphor";
+                vertical-alignment: center;
+            }
+            Text {
+                text: button.caption;
+                color: button.ink;
+                font-size: root.label-size;
+                font-family: "Segoe UI";
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    if root.has-editor : Rectangle {
+        x: root.editor.x - root.text-pad;
+        y: root.editor.y - root.text-pad;
+        width: root.editor.width + root.text-pad * 2;
+        height: root.editor.height + root.text-pad * 2;
+        border-radius: 6px * root.unit;
+        border-width: 2px * root.unit;
+        border-color: root.accent;
+        background: transparent;
+    }
+
+    if root.has-editor : TextInput {
+        x: root.editor.x;
+        y: root.editor.y;
+        width: root.editor.width;
+        height: root.editor.height;
+        text <=> root.editor-text;
+        color: root.editor-ink;
+        font-size: root.editor-font-size;
+        font-family: "Segoe UI";
+        single-line: true;
+        wrap: no-wrap;
+        horizontal-alignment: left;
+        vertical-alignment: top;
+        accepted => {
+            root.commit-text(self.text);
+        }
+        key-pressed(event) => {
+            if (event.text == "\u{001b}") {
+                root.cancel-text();
+                return EventResult.accept;
+            }
+            return EventResult.reject;
+        }
+        init => {
+            self.focus();
+        }
+    }
+}

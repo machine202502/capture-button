@@ -107,6 +107,8 @@
     "Tray video": "托盘视频",
     "Tray audio": "托盘音频",
     "Performance": "性能",
+    "Performance and overlay": "性能与叠加层",
+    "Overlay renderer": "叠加层渲染器",
     "Encoder threads": "编码线程",
     "Auto": "自动",
     "Copy": "复制",

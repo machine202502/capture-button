@@ -132,6 +132,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app"
+version = "0.4.23"
+dependencies = [
+ "ffmpeg-next",
+ "platform",
+ "png 0.17.16",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "windows 0.58.0",
+ "winres",
+]
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -540,24 +554,6 @@ dependencies = [
  "rustix 1.1.6",
  "wayland-backend",
  "wayland-client",
-]
-
-[[package]]
-name = "capture-button"
-version = "0.4.8"
-dependencies = [
- "cpal",
- "ffmpeg-next",
- "image",
- "nokhwa",
- "png 0.17.16",
- "serde_json",
- "slint",
- "slint-build",
- "velopack",
- "windows 0.58.0",
- "windows-capture",
- "winres",
 ]
 
 [[package]]
@@ -3443,6 +3439,35 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "platform"
+version = "0.4.23"
+dependencies = [
+ "cpal",
+ "image",
+ "nokhwa",
+ "platform-core",
+ "platform-windows",
+ "velopack",
+]
+
+[[package]]
+name = "platform-core"
+version = "0.4.23"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "platform-windows"
+version = "0.4.23"
+dependencies = [
+ "image",
+ "platform-core",
+ "windows 0.58.0",
+ "windows-capture",
+]
 
 [[package]]
 name = "png"

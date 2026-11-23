@@ -107,6 +107,8 @@
     "Tray video": "Видео в трее",
     "Tray audio": "Аудио в трее",
     "Performance": "Производительность",
+    "Performance and overlay": "Производительность и оверлей",
+    "Overlay renderer": "Отрисовка оверлея",
     "Encoder threads": "Потоки кодировщика",
     "Auto": "Авто",
     "System": "Системный",

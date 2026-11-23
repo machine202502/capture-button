@@ -31,6 +31,20 @@ cargo build --release --bin CaptureButton
 
 The executable is `target\release\CaptureButton.exe`. Icons, the no-signal card, and the completion sound are compiled into it.
 
+The workspace is split by responsibility, and `app` depends on one platform
+crate only:
+
+- `crates/app` — the Slint window, the capture engine and FFmpeg encoding;
+- `crates/platform` — the crate the app uses: composes the neutral layer with
+  the selected backend (camera, audio, updates, screen and region glue);
+- `crates/platform-core` — OS-neutral types and policy, including the whole
+  area-selection model; no Win32 there;
+- `crates/platform-windows` — the Win32 backend: window, tray, capture,
+  registry, dialogs, and the native GDI area overlay.
+
+[`docs/platform-layer.md`](docs/platform-layer.md) describes the contract and
+how to add another OS.
+
 `scripts\package.ps1` builds that executable, then writes a portable zip, a
 per-user MSI installer (with the standard Windows Installer wizard) and the
 update feed into `dist\` (and `site\updates\`). Packaging needs the .NET 8 SDK
@@ -63,16 +77,18 @@ the MSI). Do not delete the install folder and do not use
 Use the same `FFMPEG_DIR`.
 
 ```powershell
-cargo test --bin CaptureButton
+cargo test --workspace
 ```
 
-That runs the unit tests. The end-to-end checks live in `tests/e2e.rs` and are ignored:
+That runs the unit tests of every crate. The end-to-end checks live in `crates/app/tests/e2e.rs` and are ignored:
 
 ```powershell
 cargo test --test e2e -- --ignored
 ```
 
 They drive the hidden native window and capture the visible Slint window. Set
-`EZCAP_UPDATE_SNAPSHOTS` to any value to replace the images in `tests\snapshots`
-and `site\assets` instead of comparing them.
+`EZCAP_UPDATE_SNAPSHOTS` to any value to replace the images in
+`crates/app/tests/snapshots` and to write the `site/assets/about.png` and
+`site/assets/capture-controls.png` sources; only `crates/app/tests/snapshots` is
+compared on a normal run.
 

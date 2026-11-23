@@ -1,53 +1,11 @@
-[package]
-name = "capture-button"
-version = "0.4.8"
+[workspace]
+members = ["crates/app", "crates/platform", "crates/platform-core", "crates/platform-windows"]
+resolver = "2"
+
+[workspace.package]
+version = "0.4.23"
 edition = "2021"
 license = "MIT"
-build = "build.rs"
-
-[[bin]]
-name = "CaptureButton"
-path = "src/main.rs"
-
-[dependencies]
-cpal = "0.18"
-serde_json = "1"
-png = "0.17"
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
-ffmpeg-next = { version = "8", default-features = false, features = ["codec", "format", "filter", "software-scaling", "software-resampling"] }
-windows-capture = "2.0.1"
-velopack = "1.2.161"
-slint = { version = "=1.19.0", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-2"] }
-windows = { version = "0.58", features = [
-    "Win32_Devices_FunctionDiscovery",
-    "Win32_Foundation",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_Media_Audio",
-    "Win32_Storage_Xps",
-    "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
-    "Win32_System_DataExchange",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
-    "Win32_System_Ole",
-    "Win32_System_Registry",
-    "Win32_Security",
-    "Win32_System_SystemInformation",
-    "Win32_System_Threading",
-    "Win32_UI_Controls",
-    "Win32_UI_Controls_Dialogs",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_PropertiesSystem",
-    "Win32_UI_WindowsAndMessaging"
-] }
-nokhwa = { version = "0.10.11", default-features = false, features = ["input-msmf"] }
-
-[build-dependencies]
-slint-build = "=1.19.0"
-winres = "0.1"
 
 [profile.release]
 opt-level = "z"

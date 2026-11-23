@@ -107,6 +107,8 @@
     "Tray video": "Tray video",
     "Tray audio": "Tray audio",
     "Performance": "Performance",
+    "Performance and overlay": "Performance and overlay",
+    "Overlay renderer": "Overlay renderer",
     "Encoder threads": "Encoder threads",
     "Auto": "Auto",
     "System": "System",
