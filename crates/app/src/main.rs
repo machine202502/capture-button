@@ -867,7 +867,9 @@ impl App {
         }
         let (source, _) = start_plan(place);
         self.region_source = source;
-        if self.settings.region_renderer == 1 {
+        if platform::region::OverlayRenderer::from_setting(self.settings.region_renderer)
+            == platform::region::OverlayRenderer::Slint
+        {
             // The hidden setting selects the Slint renderer. It must never make
             // the overlay unusable: anything that goes wrong here leaves the
             // work to the native overlay below.

@@ -1,0 +1,11 @@
+[package]
+name = "platform-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+platform-core = { path = "../platform-core" }
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "randr"] }
+libc = "0.2"

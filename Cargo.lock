@@ -3448,6 +3448,7 @@ dependencies = [
  "image",
  "nokhwa",
  "platform-core",
+ "platform-linux",
  "platform-windows",
  "velopack",
 ]
@@ -3457,6 +3458,15 @@ name = "platform-core"
 version = "0.4.23"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "platform-linux"
+version = "0.4.23"
+dependencies = [
+ "libc",
+ "platform-core",
+ "x11rb",
 ]
 
 [[package]]

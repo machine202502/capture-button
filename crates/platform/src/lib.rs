@@ -31,10 +31,12 @@ mod backend {
 pub use backend::{os, outline, shell};
 
 #[cfg(target_os = "linux")]
-compile_error!(
-    "platform-linux is not implemented yet. Add a platform-linux crate exposing the same \
-     modules as platform-windows and re-export it from the `backend` module."
-);
+mod backend {
+    pub use platform_linux::{i18n, os, outline, region, screen, shell, store};
+}
+
+#[cfg(target_os = "linux")]
+pub use backend::{os, outline, shell};
 
 #[cfg(target_os = "macos")]
 compile_error!(
