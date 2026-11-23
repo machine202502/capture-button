@@ -221,24 +221,34 @@ pub fn main_window_open() -> bool {
 /// hides them.
 pub fn raise_overlay_window() {
     use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{AtomEnum, ClientMessageData, ClientMessageEvent, ConnectionExt as _, EventMask};
+    use x11rb::protocol::xproto::{
+        AtomEnum, ClientMessageData, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _,
+        EventMask, StackMode,
+    };
 
     let Ok((conn, screen_num)) = x11rb::connect(None) else {
         return;
     };
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
-    let width = screen.width_in_pixels as u32;
-    let height = screen.height_in_pixels as u32;
-    let Ok(clients) = conn.get_property(
-        false,
-        root,
-        x11rb::protocol::xproto::AtomEnum::from(AtomEnum::WINDOW),
-        0,
-        x11rb::protocol::xproto::AtomEnum::from(AtomEnum::WINDOW),
-        0,
-        1024,
-    ) else {
+    let width = screen.width_in_pixels as u16;
+    let height = screen.height_in_pixels as u16;
+    let atom = |name: &str| -> u32 {
+        conn.intern_atom(false, name.as_bytes())
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| reply.atom)
+            .unwrap_or(0)
+    };
+    let client_list = atom("_NET_CLIENT_LIST");
+    let pid_atom = atom("_NET_WM_PID");
+    let state = atom("_NET_WM_STATE");
+    let fullscreen = atom("_NET_WM_STATE_FULLSCREEN");
+    let above = atom("_NET_WM_STATE_ABOVE");
+    if client_list == 0 || pid_atom == 0 || state == 0 {
+        return;
+    }
+    let Ok(clients) = conn.get_property(false, root, client_list, AtomEnum::WINDOW, 0, 1024) else {
         return;
     };
     let Ok(clients) = clients.reply() else {
@@ -249,13 +259,17 @@ pub fn raise_overlay_window() {
     };
     let pid = std::process::id();
     for window in list {
-        let Ok(pid_reply) = conn.get_property(false, window, x11rb::protocol::xproto::AtomEnum::from(AtomEnum::CARDINAL), 0, 4) else {
+        let Ok(pid_reply) = conn.get_property(false, window, pid_atom, AtomEnum::CARDINAL, 0, 4)
+        else {
             continue;
         };
         let Ok(pid_reply) = pid_reply.reply() else {
             continue;
         };
-        let owner = pid_reply.value32().and_then(|mut values| values.next()).unwrap_or(0);
+        let owner = pid_reply
+            .value32()
+            .and_then(|mut values| values.next())
+            .unwrap_or(0);
         if owner != pid {
             continue;
         }
@@ -265,43 +279,31 @@ pub fn raise_overlay_window() {
         let Ok(geometry) = geometry.reply() else {
             continue;
         };
-        if geometry.width < width as u16 || geometry.height < height as u16 {
+        if geometry.width < width || geometry.height < height {
             continue;
         }
-        let atom = |name: &str| -> u32 {
-            conn.intern_atom(false, name.as_bytes())
-                .ok()
-                .and_then(|cookie| cookie.reply().ok())
-                .map(|reply| reply.atom)
-                .unwrap_or(0)
-        };
-        let state = atom("_NET_WM_STATE");
-        let fullscreen = atom("_NET_WM_STATE_FULLSCREEN");
-        let above = atom("_NET_WM_STATE_ABOVE");
-        if state != 0 {
-            for property in [fullscreen, above] {
-                if property == 0 {
-                    continue;
-                }
-                let event = ClientMessageEvent {
-                    response_type: x11rb::protocol::xproto::CLIENT_MESSAGE_EVENT,
-                    format: 32,
-                    sequence: 0,
-                    window,
-                    type_: state,
-                    data: ClientMessageData::from([1, property, 0, 1, 0]),
-                };
-                let _ = conn.send_event(
-                    false,
-                    root,
-                    EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-                    event,
-                );
+        for property in [fullscreen, above] {
+            if property == 0 {
+                continue;
             }
+            let event = ClientMessageEvent {
+                response_type: x11rb::protocol::xproto::CLIENT_MESSAGE_EVENT,
+                format: 32,
+                sequence: 0,
+                window,
+                type_: state,
+                data: ClientMessageData::from([1u32, property, 0, 1, 0]),
+            };
+            let _ = conn.send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            );
         }
         let _ = conn.configure_window(
             window,
-            &x11rb::protocol::xproto::ConfigureWindowAux::new().stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+            &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
         );
         let _ = conn.flush();
     }
