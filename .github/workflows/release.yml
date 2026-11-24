@@ -108,3 +108,165 @@ jobs:
       - name: Package and publish
         shell: pwsh
         run: ./scripts/publish.ps1 -Tag "v${{ needs.version.outputs.version }}"
+
+  # Ubuntu 24.04 targets glibc 2.39 and ships PipeWire 1.0.5, which is the API
+  # the `pipewire` crate 0.10 builds against. Its FFmpeg is 6.1, so the job
+  # builds FFmpeg 8.1 from source once and caches the prefix.
+  #
+  # It runs after the Windows job because that job creates the release; the
+  # Linux assets are uploaded into it afterwards. Velopack's Linux package is
+  # a self-updating AppImage (there is no installer), and its channel is
+  # `linux`, so nothing here can collide with the Windows assets.
+  linux:
+    needs: [version, release]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      FFMPEG_DIR: ${{ github.workspace }}/.ffmpeg/8.1
+      PKG_CONFIG_PATH: ${{ github.workspace }}/.ffmpeg/8.1/lib/pkgconfig
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # ffmpeg-sys-next runs bindgen (libclang), cpal links ALSA, nokhwa's v4l
+      # backend needs the V4L2 headers, pipewire-sys generates its bindings
+      # from the PipeWire 1.0.5 headers, and the rest are FFmpeg's inputs.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config nasm xz-utils libclang-dev dpkg \
+            libasound2-dev libpipewire-0.3-dev libv4l-dev libfontconfig1-dev \
+            libx264-dev libwebp-dev libmp3lame-dev zlib1g-dev
+
+      # Bump the key suffix whenever the configure line or the copied archives
+      # below change; the cached prefix is reused as-is otherwise.
+      - name: Restore FFmpeg 8.1
+        id: ffmpeg
+        uses: actions/cache/restore@v4
+        with:
+          path: .ffmpeg
+          key: ffmpeg-8.1-linux-x64-gpl-slim-v1
+
+      # The component list matches vcpkg-overlays/ffmpeg/portfile.cmake (the
+      # slim Windows build), so both platforms ship the same codecs. --enable-gpl
+      # with --enable-libx264 is what the Windows build already does; it makes
+      # this FFmpeg GPL v2 or later, like the one the executable carries.
+      - name: Build FFmpeg 8.1
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          prefix="$FFMPEG_DIR"
+          rm -rf "$prefix" /tmp/ffmpeg-src
+          mkdir -p /tmp/ffmpeg-src
+          curl -fsSL --retry 3 \
+            "https://ffmpeg.org/releases/ffmpeg-8.1.tar.xz" -o /tmp/ffmpeg.tar.xz
+          echo "b072aed6871998cce9b36e7774033105ca29e33632be5b6347f3206898e0756a  /tmp/ffmpeg.tar.xz" \
+            | sha256sum -c -
+          tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-src --strip-components=1
+          cd /tmp/ffmpeg-src
+          ./configure \
+            --prefix="$prefix" \
+            --pkg-config-flags=--static \
+            --enable-gpl --enable-libx264 --enable-libwebp --enable-libmp3lame --enable-zlib \
+            --enable-pic --disable-doc --disable-programs --disable-network --disable-autodetect \
+            --disable-debug --enable-runtime-cpudetect \
+            --disable-everything \
+            --disable-hwaccels --disable-devices \
+            --enable-protocol=file \
+            --enable-muxer=matroska,gif,webp,mp3,image2 \
+            --enable-demuxer=matroska,gif,webp,mp3,image2,png_pipe,gif_pipe,webp_pipe \
+            --enable-encoder=libx264,libx264rgb,libwebp,libwebp_anim,gif,png,aac,libmp3lame \
+            --enable-decoder=h264,gif,png,webp,libwebp,aac,mp3,mp3float \
+            --enable-parser=h264,aac,gif,png,mpegaudio,webp \
+            --enable-bsf=extract_extradata,dump_extradata,null,h264_mp4toannexb,aac_adtstoasc \
+            --enable-filter=buffer,buffersink,scale,fps,format,split,palettegen,paletteuse \
+            --disable-iamf \
+            --disable-htmlpages --disable-manpages --disable-podpages --disable-txtpages
+          make -j"$(nproc)"
+          make install
+          # build.rs links every library named in the .pc Libs/Libs.private by
+          # name and picks <prefix>/lib/<name>.a when it exists. Copying the
+          # external codecs there keeps them static; otherwise the AppImage
+          # would need libx264/libwebp/libmp3lame from the host.
+          cp /usr/lib/x86_64-linux-gnu/libx264.a \
+             /usr/lib/x86_64-linux-gnu/libwebp.a \
+             /usr/lib/x86_64-linux-gnu/libwebpmux.a \
+             /usr/lib/x86_64-linux-gnu/libsharpyuv.a \
+             /usr/lib/x86_64-linux-gnu/libmp3lame.a \
+             /usr/lib/x86_64-linux-gnu/libz.a \
+             "$prefix/lib/"
+          rm -rf /tmp/ffmpeg-src /tmp/ffmpeg.tar.xz
+
+      - name: Save FFmpeg 8.1
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ffmpeg
+          key: ffmpeg-8.1-linux-x64-gpl-slim-v1
+
+      # Fail here, with the version printed, instead of in a C header mismatch.
+      # FFmpeg 8 is libavcodec 62; 61 would be FFmpeg 7.
+      - name: Check FFmpeg
+        run: |
+          set -euo pipefail
+          pkg-config --modversion libavcodec
+          pkg-config --exists "libavcodec >= 62"
+          test "$(pkg-config --variable=prefix libavcodec)" = "$FFMPEG_DIR"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-linux-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-linux-
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache vpk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.dotnet/tools
+            ~/.nuget/packages
+          key: dotnet-vpk-1.2.161
+
+      - name: Install Velopack
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.dotnet/tools:$PATH"
+          if ! command -v vpk >/dev/null 2>&1; then
+            dotnet tool install --global vpk --version 1.2.161
+          fi
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: cargo build --release -p app
+
+      # --skip-build reuses target/release/CaptureButton and also writes the
+      # AppImage, the .deb, the feed and the .nupkg (the feed copy goes to
+      # site/updates), so the release and the site stay in sync.
+      - name: Package AppImage, .deb and update feed
+        run: bash scripts/package-linux.sh --skip-build
+
+      - name: Upload Linux assets
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.version.outputs.version }}"
+          version="$(awk -F'"' '/^version[[:space:]]*=/{print $2; exit}' Cargo.toml)"
+          ls -l dist dist/velopack
+          gh release upload "$tag" \
+            "dist/CaptureButton-${version}-linux-x64.AppImage" \
+            "dist/CaptureButton-${version}-linux-x64.deb" \
+            dist/releases.linux.json \
+            dist/velopack/*.nupkg \
+            --clobber

@@ -1,7 +1,8 @@
 //! Persistent settings storage.
 //!
 //! This is the API the application uses; the backend owns the actual key/value
-//! store (the Windows registry). The settings schema itself lives in the app.
+//! store (the Windows registry today, a file under the XDG config directory on
+//! a future Linux backend). The settings schema itself lives in the app.
 
 pub use platform_core::runtime::test_mode;
 

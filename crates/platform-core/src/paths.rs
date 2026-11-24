@@ -1,8 +1,8 @@
 //! Where output files go and how they are named.
 //!
 //! The folder settings, the per-category fallback and the file name format are
-//! fixed here. Only the built-in default folder (Documents) comes from the
-//! backend.
+//! the same on every OS. Only the built-in default folder (Documents on
+//! Windows) comes from the backend.
 
 use crate::time::LocalTime;
 use crate::types::{OutputCategory, OutputFolders};

@@ -8,7 +8,8 @@ use crate::palette::{bgra, Palette};
 use crate::region;
 use platform_core::i18n::wide;
 pub use platform_core::tray::{
-    hotkey_defs, hotkey_from_press, parse_hotkey, Hotkey, HotkeyAction, HotkeyBinding, HotkeyKey,
+    hotkey_defs, hotkey_from_press, parse_hotkey, Hotkey, HotkeyAction, HotkeyBinding,
+    HotkeyChoice, HotkeyEvent, HotkeyKey,
 };
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -513,6 +514,12 @@ pub fn hotkeys_supported() -> bool {
     true
 }
 
+/// Windows has no system dialog for application hotkeys: the settings field
+/// captures the combination and the backend grabs it.
+pub fn hotkey_choice() -> HotkeyChoice {
+    HotkeyChoice::Field
+}
+
 /// Applies the table's combinations, removing every action that is unset.
 ///
 /// An unparsable combination is an error and leaves the previously registered
@@ -547,6 +554,12 @@ pub fn register_hotkeys(bindings: &[HotkeyBinding]) -> Result<(), String> {
         )?;
     }
     Ok(())
+}
+
+/// Asks for the combinations again. Windows has no system dialog: the settings
+/// field captures the press, so applying the set is all there is to do.
+pub fn change_hotkeys(_action: HotkeyAction, bindings: &[HotkeyBinding]) -> Result<(), String> {
+    register_hotkeys(bindings)
 }
 
 fn parse_side(text: &str) -> Result<Option<Hotkey>, String> {

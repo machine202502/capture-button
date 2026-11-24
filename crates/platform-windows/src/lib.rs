@@ -9,6 +9,7 @@
 
 pub mod audio;
 pub mod gdiplus;
+pub mod camera;
 pub mod i18n;
 pub mod os;
 pub mod outline;

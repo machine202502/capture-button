@@ -2,7 +2,7 @@
 //! file stays OS-neutral; the backend decides where the values live.
 
 use crate::media::{self, AudioSettings, Format, VideoSettings};
-use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding};
+use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding, HotkeyChoice};
 use platform::store::Store;
 
 #[derive(Clone)]
@@ -196,6 +196,10 @@ pub struct Settings {
     /// The saved combination of every hotkey action, in `HOTKEY_DEFS` order.
     /// An empty combination means the action is unbound.
     pub hotkeys: Vec<HotkeyBinding>,
+    /// Whether the desktop's hotkey dialog has already been answered once on a
+    /// session that owns the combinations. It keeps a deliberate "no hotkeys"
+    /// from turning back into a proposal at every start.
+    pub hotkeys_configured: bool,
     /// Folders chosen for each kind of file; empty slots use the default folder.
     pub folders: media::OutputFolders,
 }
@@ -227,26 +231,31 @@ impl Default for Settings {
                 .iter()
                 .map(|def| HotkeyBinding::unset(def.action))
                 .collect(),
+            hotkeys_configured: false,
             folders: media::OutputFolders::EMPTY,
         }
     }
 }
 
 impl Settings {
-    /// Loads the settings.
-    pub fn load() -> Self {
+    /// Loads the settings. `choice` says how this session chooses the global
+    /// combinations: a combination the desktop owns is kept as the desktop
+    /// reported it, while a field-captured one is normalized to its canonical
+    /// label and dropped when it no longer parses.
+    pub fn load(choice: HotkeyChoice) -> Self {
         let mut settings = Self::default();
         let Some(registry) = Store::open() else {
             return settings;
         };
         settings.ui_language = registry.string("ui_language", "");
+        settings.hotkeys_configured = registry.dword("hotkey_configured", 0) != 0;
         // The per-action keys are the same ones earlier versions wrote
         // (`hotkey_area`, `hotkey_stop`), so an upgrade keeps them.
         settings.hotkeys = hotkey_defs()
             .iter()
             .map(|def| HotkeyBinding {
                 action: def.action,
-                combination: saved_hotkey(registry.string(def.settings_key, "")),
+                combination: saved_hotkey(choice, registry.string(def.settings_key, "")),
             })
             .collect();
         settings.ui.format = Format::from_index(registry.dword("format", 0) as usize);
@@ -369,7 +378,6 @@ impl Settings {
 
     /// Stores the combination of `action`, adding its row when the settings do
     /// not have one yet.
-    #[cfg(test)]
     pub fn set_hotkey(&mut self, action: HotkeyAction, combination: String) {
         match self
             .hotkeys
@@ -381,6 +389,13 @@ impl Settings {
                 action,
                 combination,
             }),
+        }
+    }
+
+    /// Adopts a set the backend reported, leaving other actions untouched.
+    pub fn set_hotkeys(&mut self, bindings: &[HotkeyBinding]) {
+        for binding in bindings {
+            self.set_hotkey(binding.action, binding.combination.clone());
         }
     }
 
@@ -415,6 +430,7 @@ impl Settings {
         registry.set_dword("region_renderer", self.region_renderer);
         registry.set_dword("threads", self.threads);
         registry.set_string("ui_language", &self.ui_language);
+        registry.set_dword("hotkey_configured", self.hotkeys_configured as u32);
         for def in hotkey_defs() {
             let combination = self.hotkey(def.action);
             registry.set_string(def.settings_key, combination);
@@ -469,8 +485,9 @@ fn validate_audio_device(audio: &mut AudioSettings) {
     }
 }
 
-/// Keeps a saved output that the current system still knows. An empty source
-/// list means the backend cannot enumerate right now, so the saved id is left
+/// Keeps a saved sink that the current server still knows. An empty source list
+/// means the backend cannot enumerate (there is no PulseAudio/PipeWire server,
+/// or the Windows enumeration is not implemented yet), so the saved id is left
 /// alone instead of being wiped by a temporary outage.
 fn validate_system_device(audio: &mut AudioSettings, sources: &[platform::audio::AudioSource]) {
     if sources.is_empty() || audio.system_device == "auto" {
@@ -496,8 +513,17 @@ fn valid_hotkey(text: String) -> String {
 }
 
 /// The text a saved hotkey keeps on this session.
-fn saved_hotkey(text: String) -> String {
-    valid_hotkey(text)
+fn saved_hotkey(choice: HotkeyChoice, text: String) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    match choice {
+        // The desktop owns the combination and reports a description meant to
+        // be rendered, so it is stored and shown exactly as reported.
+        HotkeyChoice::SystemDialog => text.to_string(),
+        HotkeyChoice::Field => valid_hotkey(text.to_string()),
+    }
 }
 
 fn load_profile(registry: &Store, prefix: &str, profile: &mut CaptureSettings) {
@@ -579,7 +605,7 @@ pub fn decode_history(text: &str, limit: usize) -> Vec<(std::path::PathBuf, Stri
 mod recording_profiles {
     use super::{ProfileRef, Settings};
     use crate::media::{Format, VideoSettings};
-    use platform::shell::{hotkey_defs, HotkeyAction};
+    use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding, HotkeyChoice};
 
     fn picture(height: u32, fps: u32) -> VideoSettings {
         VideoSettings { height, fps }
@@ -636,10 +662,26 @@ mod recording_profiles {
     }
 
     #[test]
-    fn a_saved_hotkey_is_canonical_or_dropped() {
-        assert_eq!(super::saved_hotkey("  ".into()), "");
-        assert_eq!(super::saved_hotkey("Press <Shift><Control>F12".into()), "");
-        assert_eq!(super::saved_hotkey("ctrl+f12".into()), "Ctrl+F12");
+    fn a_hotkey_the_desktop_owns_is_kept_as_reported() {
+        let reported = "Press <Shift><Control>F12";
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::SystemDialog, reported.into()),
+            reported
+        );
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::SystemDialog, "   ".into()),
+            ""
+        );
+        // A field-captured setting still drops what the parser rejects, so the
+        // fallback path never shows text it cannot register.
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::Field, reported.into()),
+            ""
+        );
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::Field, "ctrl+f12".into()),
+            "Ctrl+F12"
+        );
     }
 
     #[test]
@@ -651,8 +693,11 @@ mod recording_profiles {
         settings.set_hotkey(HotkeyAction::Stop, "Alt+F9".into());
         assert_eq!(settings.hotkey(HotkeyAction::Stop), "Alt+F9");
         assert_eq!(settings.hotkey(HotkeyAction::Area), "");
-        // A saved set replaces the rows it names and keeps the others.
-        settings.set_hotkey(HotkeyAction::Area, "Ctrl+Shift+F12".into());
+        // A reported set replaces the rows it names and keeps the others.
+        settings.set_hotkeys(&[HotkeyBinding {
+            action: HotkeyAction::Area,
+            combination: "Ctrl+Shift+F12".into(),
+        }]);
         assert_eq!(settings.hotkey(HotkeyAction::Area), "Ctrl+Shift+F12");
         assert_eq!(settings.hotkey(HotkeyAction::Stop), "Alt+F9");
     }

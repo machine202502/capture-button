@@ -4,6 +4,23 @@ param(
     [string]$Version
 )
 
+function Test-ShippedOnWindowsX64 {
+    param([string]$Target)
+    if (-not $Target) { return $true }
+    $t = $Target.ToLowerInvariant()
+    if ($t -eq 'cfg(windows)' -or $t -eq 'cfg(target_os = "windows")') { return $true }
+    if ($t -eq 'cfg(not(windows))' -or $t -eq 'cfg(unix)' -or $t -eq 'cfg(any())') { return $false }
+    foreach ($skip in @(
+            'apple', 'android', 'unix', 'linux', 'ios', 'wasm', 'hermit', 'redox',
+            'dragonfly', 'freebsd', 'gnullvm', 'target_env = "gnu"',
+            'target_arch = "x86"', 'target_arch = "aarch64"'
+        )) {
+        if ($t.Contains($skip)) { return $false }
+    }
+    if ($t.Contains('x86_64') -and $t.Contains('msvc')) { return $true }
+    return $false
+}
+
 function Test-ProcMacroOnly {
     param($Package)
     $kinds = @()
@@ -87,13 +104,11 @@ function New-ThirdPartyNotice {
     [void]$text.AppendLine("")
     [void]$text.AppendLine("==== Rust crates ====")
     [void]$text.AppendLine("")
-    [void]$text.AppendLine("Crates compiled into this executable. A crate that declares the Do What The Fuck You Want To Public License but ships no license file gets that text below.")
+    [void]$text.AppendLine("Crates compiled into this Windows x64 executable. A crate that declares the Do What The Fuck You Want To Public License but ships no license file gets that text below.")
     [void]$text.AppendLine("")
     Push-Location $root
     try {
-        $hostTriple = ((& rustc -vV | Select-String -Pattern '^host:').Line -split ':', 2)[1].Trim()
-        if (-not $hostTriple) { throw "rustc did not report its host triple" }
-        $metaJson = (& cargo metadata --format-version 1 --filter-platform $hostTriple | Out-String)
+        $metaJson = (& cargo metadata --format-version 1 | Out-String)
     }
     finally {
         Pop-Location
@@ -135,7 +150,8 @@ function New-ThirdPartyNotice {
         foreach ($dep in @($node.deps)) {
             $take = $false
             foreach ($kind in @($dep.dep_kinds)) {
-                if (-not $kind.kind -or $kind.kind -eq "normal") { $take = $true }
+                if ($kind.kind -and $kind.kind -ne "normal") { continue }
+                if (Test-ShippedOnWindowsX64 $kind.target) { $take = $true }
             }
             if ($take) { $queue.Enqueue([string]$dep.pkg) }
         }
@@ -233,14 +249,8 @@ if (-not $env:FFMPEG_DIR) {
 }
 
 Write-Host "Building Capture Button $Version"
-# Native tools report progress on stderr. With ErrorActionPreference = Stop,
-# PowerShell 5 turns that into a terminating error before the exit code is read.
-$nativePreference = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
 cargo build --release --bin CaptureButton
-$buildCode = $LASTEXITCODE
-$ErrorActionPreference = $nativePreference
-if ($buildCode -ne 0) {
+if ($LASTEXITCODE -ne 0) {
     throw "cargo build --release failed"
 }
 
@@ -283,8 +293,6 @@ if (Test-Path $velopack) {
 }
 New-Item -ItemType Directory -Force -Path $velopack | Out-Null
 
-$nativePreference = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
 & $vpk.Source pack `
     --packId CaptureButtonApp `
     --packVersion $Version `
@@ -299,9 +307,7 @@ $ErrorActionPreference = "Continue"
     --msiDialogBackground (Join-Path $Root "installer\msi-background.bmp") `
     --instWelcome (Join-Path $Root "installer\welcome.txt") `
     --outputDir $velopack
-$packCode = $LASTEXITCODE
-$ErrorActionPreference = $nativePreference
-if ($packCode -ne 0) {
+if ($LASTEXITCODE -ne 0) {
     throw "vpk pack failed"
 }
 

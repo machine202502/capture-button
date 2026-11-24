@@ -108,7 +108,7 @@ impl Default for Level {
 
 /// The microphone, as published by the cpal or WASAPI input.
 pub static MICROPHONE: Level = Level::new();
-/// The system audio, as published by the loopback stream.
+/// The system audio, as published by the loopback or the sink monitor.
 pub static SYSTEM: Level = Level::new();
 
 /// Peak level in dBFS of the microphone and of the system audio.
