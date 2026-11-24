@@ -871,10 +871,11 @@ fn sync(ui: &MainWindow, model: &Model) {
             false,
             true,
         ),
-        UpdateState::Installing => (tr("InstallingвЂ¦"), false, true),
-        UpdateState::UpToDate | UpdateState::Error | UpdateState::Unsupported => {
-            (tr("Update"), false, false)
-        }
+        UpdateState::Installing => (tr("Installing…"), false, true),
+        UpdateState::UpToDate | UpdateState::Error => (tr("Update"), false, false),
+        // A package install has no Velopack feed, so the button sends the
+        // user to the download page instead of running an update.
+        UpdateState::Unsupported => (tr("Download"), true, true),
     };
     ui.set_update_label(update_label.into());
     ui.set_update_enabled(update_enabled);
@@ -1156,6 +1157,14 @@ impl Controls {
 
     pub fn set_update_state(&self, state: UpdateState) {
         self.update(|model| model.update_state = state);
+    }
+
+    /// The state the About window shows for the update button.
+    pub fn update_state(&self) -> UpdateState {
+        self.model
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update_state
     }
 
     pub fn show_sources(&self, items: Vec<String>, monitors: usize) {

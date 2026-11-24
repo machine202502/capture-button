@@ -10,6 +10,7 @@
     "Settings": "设置",
     "Refresh": "刷新设备",
     "Update": "更新",
+    "Download": "下载",
     "Downloading {percent}%": "正在下载 {percent}%",
     "Installing…": "正在安装…",
     "System audio": "系统声音",

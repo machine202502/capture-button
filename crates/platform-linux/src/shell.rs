@@ -173,7 +173,7 @@ fn lock(path: &Path) -> std::io::Result<Option<File>> {
 ///
 /// A lock held by another process ends the search: trying the next candidate
 /// would let a second copy start next to the first one. A candidate that
-/// cannot be used at all is only logged вЂ” the application then starts without
+/// cannot be used at all is only logged — the application then starts without
 /// the guard rather than not starting.
 fn acquire(paths: &[PathBuf]) -> bool {
     let mut slot = SINGLE_INSTANCE
@@ -234,7 +234,7 @@ static SHOW_SOCKET: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Starts the socket a second instance uses to ask for the window.
 ///
 /// It runs after the single-instance lock, so a file found on disk belongs to a
-/// predecessor that died вЂ” a stale socket refuses connections and is replaced.
+/// predecessor that died — a stale socket refuses connections and is replaced.
 /// A channel that cannot be created only costs the activation; the application
 /// still starts and still refuses a second copy.
 fn start_show_socket() {
