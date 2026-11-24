@@ -1,152 +1,66 @@
-//! Audio capture through cpal (WASAPI on Windows): system loopback and
-//! microphones, delivered into a shared [`AudioQueue`].
+//! Audio capture: WASAPI loopback and microphones on Windows, the default
+//! sink monitor and microphones on Linux, delivered into a shared
+//! [`AudioQueue`].
+//!
+//! Windows keeps cpal's loopback. Linux cannot: ALSA has no playback loopback,
+//! so the Linux backend reads the PulseAudio/PipeWire monitor with `parec`.
+//!
+//! The system-audio device and volume are chosen per capture profile. The Linux
+//! backend records a named sink's monitor; the Windows backend enumerates
+//! render endpoints (see `system_sources`).
+//!
+//! Every backend also publishes the peak of each buffer it queues, so the
+//! window can draw the live level inside both volume sliders.
 
-use crate::geom::{self, AudioQueue};
-use crate::i18n::{tr, trf};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SampleFormat, SizedSample};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+pub use platform_core::level::Meter;
 
-pub struct AudioIn {
-    pub queue: Arc<Mutex<AudioQueue>>,
-    _stream: cpal::Stream,
+/// One selectable system-audio source.
+///
+/// `id` is what the backend passes to its capture API (a PulseAudio/PipeWire
+/// sink name on Linux, a WASAPI endpoint id on Windows); `name` is the text the
+/// Settings window shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioSource {
+    pub id: String,
+    pub name: String,
 }
 
-pub fn open_stream(
-    system: bool,
-    device_name: Option<&str>,
-    clock: Instant,
-    gain: Arc<AtomicU32>,
-) -> Result<AudioIn, String> {
-    let host = cpal::default_host();
-    let (device, supported) = if system {
-        let device = host
-            .default_output_device()
-            .ok_or(tr("No playback device for system audio"))?;
-        let supported = device
-            .default_output_config()
-            .map_err(|error| trf("System audio: {error}", &[("error", &error.to_string())]))?;
-        (device, supported)
-    } else if let Some(name) = device_name {
-        let device = host
-            .input_devices()
-            .map_err(|error| error.to_string())?
-            .find(|device| device.to_string() == name)
-            .ok_or_else(|| trf("Microphone \"{name}\" was not found", &[("name", name)]))?;
-        let supported = device
-            .default_input_config()
-            .map_err(|error| trf("Microphone: {error}", &[("error", &error.to_string())]))?;
-        (device, supported)
-    } else {
-        let device = host.default_input_device().ok_or(tr("No microphone"))?;
-        let supported = device
-            .default_input_config()
-            .map_err(|error| format!("Microphone: {error}"))?;
-        (device, supported)
-    };
-    let channels = supported.channels();
-    let rate = supported.sample_rate();
-    let format = supported.sample_format();
-    let config = supported.config();
-    let queue = Arc::new(Mutex::new(AudioQueue::default()));
-    let target = queue.clone();
-    // Only the microphone channel has a user-facing gain. System audio stays at unity.
-    let gain = if system {
-        Arc::new(AtomicU32::new(100))
-    } else {
-        gain
-    };
-    let stream = match format {
-        SampleFormat::F32 => build::<f32>(&device, config, channels, rate, target, clock, gain),
-        SampleFormat::I16 => build::<i16>(&device, config, channels, rate, target, clock, gain),
-        SampleFormat::I32 => build::<i32>(&device, config, channels, rate, target, clock, gain),
-        SampleFormat::U16 => build::<u16>(&device, config, channels, rate, target, clock, gain),
-        other => Err(trf(
-            "Unsupported audio format {other}",
-            &[("other", &other.to_string())],
-        )),
-    }?;
-    stream
-        .play()
-        .map_err(|error| trf("Audio stream: {error}", &[("error", &error.to_string())]))?;
-    Ok(AudioIn {
-        queue,
-        _stream: stream,
-    })
+/// Peak level in dBFS of the microphone and of the system audio, in that order.
+///
+/// A source that is silent, or that no open stream is feeding, reports
+/// `f32::NEG_INFINITY`; the window maps either to an empty bar.
+pub fn levels() -> (f32, f32) {
+    platform_core::level::levels()
 }
 
-fn apply_live_gain(samples: &mut [f32], gain: &AtomicU32) {
-    // Read the shared value for every buffer, so moving the volume control during a
-    // recording changes the next mixed block, not only a later take.
-    geom::apply_gain(samples, gain.load(Ordering::Relaxed));
+#[cfg(target_os = "linux")]
+pub use platform_linux::audio::{open_preview, open_stream, AudioIn, AudioPreview};
+
+#[cfg(target_os = "linux")]
+pub fn system_sources() -> Vec<AudioSource> {
+    platform_linux::audio::system_sources()
+        .into_iter()
+        .map(|source| AudioSource {
+            id: source.id,
+            name: source.name,
+        })
+        .collect()
 }
 
-fn build<T>(
-    device: &cpal::Device,
-    config: cpal::StreamConfig,
-    channels: u16,
-    rate: u32,
-    target: Arc<Mutex<AudioQueue>>,
-    clock: Instant,
-    gain: Arc<AtomicU32>,
-) -> Result<cpal::Stream, String>
-where
-    T: SizedSample,
-    f32: FromSample<T>,
-{
-    device
-        .build_input_stream::<T, _, _>(
-            config,
-            move |data, _| {
-                let converted: Vec<f32> = data
-                    .iter()
-                    .map(|sample| sample.to_sample::<f32>())
-                    .collect();
-                let mut ready = geom::to_stereo_48k(&converted, channels, rate);
-                apply_live_gain(&mut ready, &gain);
-                let frames = ready.len() / 2;
-                if frames == 0 {
-                    return;
-                }
-                let end = geom::sample_index(clock.elapsed().as_nanos(), 48_000);
-                let start = end.saturating_sub(frames as u64);
-                let mut guard = target.lock().unwrap_or_else(|error| error.into_inner());
-                guard.append(start, &ready);
-                let end = guard.end();
-                if end.saturating_sub(guard.origin) > 48_000 * 10 {
-                    guard.drop_before(end - 48_000 * 10);
-                }
-            },
-            |_| {},
-            None,
-        )
-        .map_err(|error| format!("Audio stream: {error}"))
+/// Enumerates the playback devices the system audio can be recorded from.
+///
+/// Linux returns the PulseAudio/PipeWire sinks and their descriptions; the
+/// Windows backend returns the WASAPI render endpoints.
+#[cfg(not(target_os = "linux"))]
+pub fn system_sources() -> Vec<AudioSource> {
+    crate::backend::audio::render_endpoints()
+        .into_iter()
+        .map(|device| AudioSource {
+            id: device.id,
+            name: device.name,
+        })
+        .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::apply_live_gain;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    #[test]
-    fn the_microphone_volume_is_read_again_for_each_audio_buffer() {
-        let gain = AtomicU32::new(100);
-        let mut at_unity = [0.25f32, -0.5];
-        apply_live_gain(&mut at_unity, &gain);
-        assert_eq!(at_unity, [0.25, -0.5]);
-        let mut doubled = [0.25f32, -0.5];
-        gain.store(200, Ordering::SeqCst);
-        apply_live_gain(&mut doubled, &gain);
-        assert_eq!(doubled, [0.5, -1.0]);
-        let mut tripled = [0.25f32, -0.5];
-        gain.store(300, Ordering::SeqCst);
-        apply_live_gain(&mut tripled, &gain);
-        assert_eq!(tripled, [0.75, -1.5]);
-        let mut muted = [0.25f32, -0.5];
-        gain.store(0, Ordering::SeqCst);
-        apply_live_gain(&mut muted, &gain);
-        assert_eq!(muted, [0.0, 0.0]);
-    }
-}
+#[cfg(not(target_os = "linux"))]
+pub use crate::backend::audio::{open_preview, open_stream, AudioIn, AudioPreview};

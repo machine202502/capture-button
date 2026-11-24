@@ -2,6 +2,7 @@
 //! file stays OS-neutral; the backend decides where the values live.
 
 use crate::media::{self, AudioSettings, Format, VideoSettings};
+use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding, HotkeyChoice};
 use platform::store::Store;
 
 #[derive(Clone)]
@@ -10,6 +11,8 @@ pub struct CaptureSettings {
     pub video: [VideoSettings; 3],
     pub audio: AudioSettings,
     pub cursor: bool,
+    /// Monitor id for a full-screen recording; `"auto"` follows the primary.
+    pub monitor: String,
 }
 
 impl CaptureSettings {
@@ -32,6 +35,7 @@ impl CaptureSettings {
             ],
             audio: AudioSettings::default(),
             cursor: true,
+            monitor: "auto".into(),
         }
     }
 
@@ -73,6 +77,27 @@ pub enum ProfileRef {
 
 impl ProfileRef {
     pub const ALL: [Self; 4] = [Self::Capture, Self::Area, Self::Video, Self::Audio];
+
+    /// The slot this profile has in the app's per-profile level and preview
+    /// tables, in `ALL` order.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Capture => 0,
+            Self::Area => 1,
+            Self::Video => 2,
+            Self::Audio => 3,
+        }
+    }
+
+    /// The audio settings of this profile.
+    pub fn audio(self, settings: &Settings) -> &AudioSettings {
+        match self {
+            Self::Capture => &settings.ui.audio,
+            Self::Area => &settings.tray_area.audio,
+            Self::Video => &settings.tray_video.audio,
+            Self::Audio => &settings.tray_audio,
+        }
+    }
 }
 
 /// What one recording is made of. An audio recording has no picture.
@@ -156,15 +181,25 @@ pub struct Settings {
     /// Volume in percent for both sounds; 100 is the level of the WAV assets.
     pub sound_volume: u32,
     pub screenshot_sound: bool,
+    /// Whether the volume sliders show a live level while the window is idle.
+    /// It keeps one metering-only stream per enabled input open.
+    pub show_idle_level: bool,
     pub show_no_signal: bool,
     pub show_card: bool,
     pub threads: u32,
-    /// Which renderer draws the area-selection overlay: `0` is the native GDI
-    /// overlay, `1` the Slint one. Hidden from the Settings window; it is set
-    /// through the store and picked up on the next start.
+    /// Which renderer draws the area-selection overlay: `0` is the native
+    /// overlay (GDI on Windows), `1` the Slint one. Hidden from the Settings
+    /// window; it is set through the store and picked up on the next start.
     pub region_renderer: u32,
     /// Interface language code; empty follows the Windows language.
     pub ui_language: String,
+    /// The saved combination of every hotkey action, in `HOTKEY_DEFS` order.
+    /// An empty combination means the action is unbound.
+    pub hotkeys: Vec<HotkeyBinding>,
+    /// Whether the desktop's hotkey dialog has already been answered once on a
+    /// session that owns the combinations. It keeps a deliberate "no hotkeys"
+    /// from turning back into a proposal at every start.
+    pub hotkeys_configured: bool,
     /// Folders chosen for each kind of file; empty slots use the default folder.
     pub folders: media::OutputFolders,
 }
@@ -186,23 +221,43 @@ impl Default for Settings {
             completion_sound: true,
             sound_volume: 50,
             screenshot_sound: true,
+            show_idle_level: true,
             show_no_signal: true,
             show_card: true,
             threads: 0,
-            region_renderer: platform::region::default_overlay_renderer().to_setting(),
+            region_renderer: u32::from(platform::region::default_renderer().id),
             ui_language: String::new(),
+            hotkeys: hotkey_defs()
+                .iter()
+                .map(|def| HotkeyBinding::unset(def.action))
+                .collect(),
+            hotkeys_configured: false,
             folders: media::OutputFolders::EMPTY,
         }
     }
 }
 
 impl Settings {
-    pub fn load() -> Self {
+    /// Loads the settings. `choice` says how this session chooses the global
+    /// combinations: a combination the desktop owns is kept as the desktop
+    /// reported it, while a field-captured one is normalized to its canonical
+    /// label and dropped when it no longer parses.
+    pub fn load(choice: HotkeyChoice) -> Self {
         let mut settings = Self::default();
         let Some(registry) = Store::open() else {
             return settings;
         };
         settings.ui_language = registry.string("ui_language", "");
+        settings.hotkeys_configured = registry.dword("hotkey_configured", 0) != 0;
+        // The per-action keys are the same ones earlier versions wrote
+        // (`hotkey_area`, `hotkey_stop`), so an upgrade keeps them.
+        settings.hotkeys = hotkey_defs()
+            .iter()
+            .map(|def| HotkeyBinding {
+                action: def.action,
+                combination: saved_hotkey(choice, registry.string(def.settings_key, "")),
+            })
+            .collect();
         settings.ui.format = Format::from_index(registry.dword("format", 0) as usize);
         for (index, name) in ["mkv", "gif", "webp"].iter().enumerate() {
             settings.ui.video[index].height =
@@ -213,6 +268,7 @@ impl Settings {
         }
         load_audio(&registry, "ui", &mut settings.ui.audio);
         settings.ui.cursor = registry.dword("ui_cursor", 1) != 0;
+        settings.ui.monitor = registry.string("ui_monitor", "auto");
         load_profile(&registry, "area", &mut settings.tray_area);
         load_profile(&registry, "video", &mut settings.tray_video);
         // Tray video has no format choice anymore: it is always MKV. Tray area
@@ -230,12 +286,13 @@ impl Settings {
         settings.completion_sound = registry.dword("completion_sound", 1) != 0;
         settings.sound_volume = registry.dword("sound_volume", 50).min(100);
         settings.screenshot_sound = registry.dword("screenshot_sound", 1) != 0;
+        settings.show_idle_level = registry.dword("idle_level", 1) != 0;
         settings.show_no_signal = registry.dword("show_no_signal", 1) != 0;
         settings.show_card = registry.dword("show_card", 1) != 0;
         settings.threads = registry.dword("threads", 0);
         settings.region_renderer = registry.dword(
             "region_renderer",
-            platform::region::default_overlay_renderer().to_setting(),
+            u32::from(platform::region::default_renderer().id),
         );
         for category in media::OutputCategory::ALL {
             let value = registry.string(folder_key(category), "");
@@ -247,6 +304,10 @@ impl Settings {
         }
         for source in ProfileRef::ALL {
             validate_audio_device(settings.audio_mut(source));
+        }
+        let system_sources = platform::audio::system_sources();
+        for source in ProfileRef::ALL {
+            validate_system_device(settings.audio_mut(source), &system_sources);
         }
         settings
     }
@@ -306,6 +367,38 @@ impl Settings {
         }
     }
 
+    /// The saved combination of `action`; empty means unbound.
+    pub fn hotkey(&self, action: HotkeyAction) -> &str {
+        self.hotkeys
+            .iter()
+            .find(|binding| binding.action == action)
+            .map(|binding| binding.combination.as_str())
+            .unwrap_or_default()
+    }
+
+    /// Stores the combination of `action`, adding its row when the settings do
+    /// not have one yet.
+    pub fn set_hotkey(&mut self, action: HotkeyAction, combination: String) {
+        match self
+            .hotkeys
+            .iter_mut()
+            .find(|binding| binding.action == action)
+        {
+            Some(binding) => binding.combination = combination,
+            None => self.hotkeys.push(HotkeyBinding {
+                action,
+                combination,
+            }),
+        }
+    }
+
+    /// Adopts a set the backend reported, leaving other actions untouched.
+    pub fn set_hotkeys(&mut self, bindings: &[HotkeyBinding]) {
+        for binding in bindings {
+            self.set_hotkey(binding.action, binding.combination.clone());
+        }
+    }
+
     pub fn save(&self) {
         let Some(registry) = Store::open() else {
             return;
@@ -317,6 +410,7 @@ impl Settings {
         }
         save_audio(&registry, "ui", &self.ui.audio);
         registry.set_dword("ui_cursor", self.ui.cursor as u32);
+        registry.set_string("ui_monitor", &self.ui.monitor);
         save_profile(&registry, "area", &self.tray_area);
         save_profile(&registry, "video", &self.tray_video);
         save_audio(&registry, "audio", &self.tray_audio);
@@ -330,11 +424,17 @@ impl Settings {
         registry.set_dword("completion_sound", self.completion_sound as u32);
         registry.set_dword("sound_volume", self.sound_volume.min(100));
         registry.set_dword("screenshot_sound", self.screenshot_sound as u32);
+        registry.set_dword("idle_level", self.show_idle_level as u32);
         registry.set_dword("show_no_signal", self.show_no_signal as u32);
         registry.set_dword("show_card", self.show_card as u32);
         registry.set_dword("region_renderer", self.region_renderer);
         registry.set_dword("threads", self.threads);
         registry.set_string("ui_language", &self.ui_language);
+        registry.set_dword("hotkey_configured", self.hotkeys_configured as u32);
+        for def in hotkey_defs() {
+            let combination = self.hotkey(def.action);
+            registry.set_string(def.settings_key, combination);
+        }
         for category in media::OutputCategory::ALL {
             let value = self
                 .folders
@@ -364,6 +464,10 @@ fn load_audio(registry: &Store, prefix: &str, audio: &mut AudioSettings) {
     audio.gain = registry
         .dword(&format!("{prefix}_gain"), audio.gain)
         .clamp(0, 300);
+    audio.system_device = registry.string(&format!("{prefix}_system_device"), "auto");
+    audio.system_gain = registry
+        .dword(&format!("{prefix}_system_gain"), audio.system_gain)
+        .clamp(0, 300);
 }
 
 fn save_audio(registry: &Store, prefix: &str, audio: &AudioSettings) {
@@ -371,11 +475,54 @@ fn save_audio(registry: &Store, prefix: &str, audio: &AudioSettings) {
     registry.set_dword(&format!("{prefix}_microphone"), audio.microphone as u32);
     registry.set_string(&format!("{prefix}_device"), &audio.device);
     registry.set_dword(&format!("{prefix}_gain"), audio.gain);
+    registry.set_string(&format!("{prefix}_system_device"), &audio.system_device);
+    registry.set_dword(&format!("{prefix}_system_gain"), audio.system_gain);
 }
 
 fn validate_audio_device(audio: &mut AudioSettings) {
     if audio.device != "Auto" && media::device_name(&audio.device).is_none() {
         audio.device = "Auto".into();
+    }
+}
+
+/// Keeps a saved sink that the current server still knows. An empty source list
+/// means the backend cannot enumerate (there is no PulseAudio/PipeWire server,
+/// or the Windows enumeration is not implemented yet), so the saved id is left
+/// alone instead of being wiped by a temporary outage.
+fn validate_system_device(audio: &mut AudioSettings, sources: &[platform::audio::AudioSource]) {
+    if sources.is_empty() || audio.system_device == "auto" {
+        return;
+    }
+    if !sources
+        .iter()
+        .any(|source| source.id == audio.system_device)
+    {
+        audio.system_device = "auto".into();
+    }
+}
+
+/// Drops a saved hotkey the shared parser no longer accepts, so the UI never
+/// shows text that the backend cannot register.
+fn valid_hotkey(text: String) -> String {
+    if text.trim().is_empty() {
+        return String::new();
+    }
+    platform::shell::parse_hotkey(&text)
+        .map(|hotkey| hotkey.label())
+        .unwrap_or_default()
+}
+
+/// The text a saved hotkey keeps on this session.
+fn saved_hotkey(choice: HotkeyChoice, text: String) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    match choice {
+        // The desktop owns the combination and reports a description meant to
+        // be rendered, so it is stored and shown exactly as reported.
+        HotkeyChoice::SystemDialog => text.to_string(),
+        HotkeyChoice::Field => valid_hotkey(text.to_string()),
     }
 }
 
@@ -402,6 +549,7 @@ fn load_profile(registry: &Store, prefix: &str, profile: &mut CaptureSettings) {
     }
     load_audio(registry, prefix, &mut profile.audio);
     profile.cursor = registry.dword(&format!("{prefix}_cursor"), 1) != 0;
+    profile.monitor = registry.string(&format!("{prefix}_monitor"), "auto");
 }
 
 fn save_profile(registry: &Store, prefix: &str, profile: &CaptureSettings) {
@@ -415,6 +563,7 @@ fn save_profile(registry: &Store, prefix: &str, profile: &CaptureSettings) {
     }
     save_audio(registry, prefix, &profile.audio);
     registry.set_dword(&format!("{prefix}_cursor"), profile.cursor as u32);
+    registry.set_string(&format!("{prefix}_monitor"), &profile.monitor);
 }
 
 pub fn load_history(limit: usize) -> Vec<(std::path::PathBuf, String)> {
@@ -456,6 +605,7 @@ pub fn decode_history(text: &str, limit: usize) -> Vec<(std::path::PathBuf, Stri
 mod recording_profiles {
     use super::{ProfileRef, Settings};
     use crate::media::{Format, VideoSettings};
+    use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding, HotkeyChoice};
 
     fn picture(height: u32, fps: u32) -> VideoSettings {
         VideoSettings { height, fps }
@@ -464,6 +614,92 @@ mod recording_profiles {
     #[test]
     fn sounds_start_at_half_volume() {
         assert_eq!(Settings::default().sound_volume, 50);
+    }
+
+    #[test]
+    fn video_records_the_primary_monitor_until_another_one_is_chosen() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.tray_video.monitor, "auto");
+        settings.tray_video.monitor = "DP-1".into();
+        assert_eq!(settings.tray_video.monitor, "DP-1");
+        assert_eq!(settings.tray_area.monitor, "auto");
+    }
+
+    #[test]
+    fn system_audio_starts_at_unity_with_the_default_output() {
+        let settings = Settings::default();
+        for source in ProfileRef::ALL {
+            let audio = settings.recording(source).audio().clone();
+            assert_eq!(audio.system_device, "auto", "{source:?}");
+            assert_eq!(audio.system_gain, 100, "{source:?}");
+            assert_eq!(audio.gain, 100, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn the_system_and_microphone_volumes_are_independent() {
+        let mut settings = Settings::default();
+        settings.ui.audio.gain = 120;
+        settings.ui.audio.system_gain = 40;
+        assert_eq!(settings.ui.audio.gain, 120);
+        assert_eq!(settings.ui.audio.system_gain, 40);
+        settings.ui.audio.system_gain = 300;
+        assert_eq!(settings.ui.audio.gain, 120, "the microphone is untouched");
+        settings.ui.audio.gain = 0;
+        assert_eq!(
+            settings.ui.audio.system_gain, 300,
+            "the system audio is untouched"
+        );
+    }
+
+    #[test]
+    fn an_invalid_hotkey_is_not_kept() {
+        assert_eq!(super::valid_hotkey("Ctrl+Shift+A".into()), "Ctrl+Shift+A");
+        assert_eq!(super::valid_hotkey("ctrl+f9".into()), "Ctrl+F9");
+        assert_eq!(super::valid_hotkey("".into()), "");
+        assert_eq!(super::valid_hotkey("Shift+A".into()), "");
+        assert_eq!(super::valid_hotkey("Ctrl+Nonsense".into()), "");
+    }
+
+    #[test]
+    fn a_hotkey_the_desktop_owns_is_kept_as_reported() {
+        let reported = "Press <Shift><Control>F12";
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::SystemDialog, reported.into()),
+            reported
+        );
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::SystemDialog, "   ".into()),
+            ""
+        );
+        // A field-captured setting still drops what the parser rejects, so the
+        // fallback path never shows text it cannot register.
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::Field, reported.into()),
+            ""
+        );
+        assert_eq!(
+            super::saved_hotkey(HotkeyChoice::Field, "ctrl+f12".into()),
+            "Ctrl+F12"
+        );
+    }
+
+    #[test]
+    fn a_hotkey_is_stored_per_action_from_the_table() {
+        let mut settings = Settings::default();
+        for def in hotkey_defs() {
+            assert_eq!(settings.hotkey(def.action), "", "every row starts unset");
+        }
+        settings.set_hotkey(HotkeyAction::Stop, "Alt+F9".into());
+        assert_eq!(settings.hotkey(HotkeyAction::Stop), "Alt+F9");
+        assert_eq!(settings.hotkey(HotkeyAction::Area), "");
+        // A reported set replaces the rows it names and keeps the others.
+        settings.set_hotkeys(&[HotkeyBinding {
+            action: HotkeyAction::Area,
+            combination: "Ctrl+Shift+F12".into(),
+        }]);
+        assert_eq!(settings.hotkey(HotkeyAction::Area), "Ctrl+Shift+F12");
+        assert_eq!(settings.hotkey(HotkeyAction::Stop), "Alt+F9");
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub mod audio;
 pub mod camera;
 pub mod i18n;
 pub mod logging;
+pub mod outline;
 pub mod region;
 pub mod screen;
 pub mod store;
@@ -24,19 +25,19 @@ pub mod update;
 
 #[cfg(target_os = "windows")]
 mod backend {
-    pub use platform_windows::{i18n, os, outline, region, screen, shell, store};
+    pub use platform_windows::{audio, camera, i18n, os, outline, region, screen, shell, store};
 }
 
 #[cfg(target_os = "windows")]
-pub use backend::{os, outline, shell};
+pub use backend::{os, shell};
 
 #[cfg(target_os = "linux")]
 mod backend {
-    pub use platform_linux::{i18n, os, outline, region, screen, shell, store};
+    pub use platform_linux::{camera, i18n, os, outline, region, screen, shell, store};
 }
 
 #[cfg(target_os = "linux")]
-pub use backend::{os, outline, shell};
+pub use backend::{os, shell};
 
 #[cfg(target_os = "macos")]
 compile_error!(

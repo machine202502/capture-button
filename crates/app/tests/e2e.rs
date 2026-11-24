@@ -31,11 +31,13 @@ use windows::Win32::System::Registry::{
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
 use windows::Win32::UI::Shell::{FOLDERID_Documents, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetClientRect, GetWindowRect, GetWindowTextW,
-    GetWindowThreadProcessId, IsWindowVisible, SendMessageW, SetWindowPos, SIZE_RESTORED,
-    SWP_NOACTIVATE, SWP_NOZORDER, WM_COMMAND, WM_SIZE,
+    EnumWindows, GetClassNameW, GetClientRect, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+    GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SendMessageW, SetWindowPos,
+    GWL_EXSTYLE, SIZE_RESTORED, SWP_NOACTIVATE, SWP_NOZORDER, WM_COMMAND, WM_KEYDOWN, WM_KEYUP,
+    WM_SIZE, WS_EX_TOPMOST,
 };
 
 const ID_SETTINGS_TAB: i32 = 101;
@@ -43,6 +45,7 @@ const ID_ABOUT: i32 = 103;
 const ID_ABOUT_CLOSE: i32 = 281;
 const ID_FORMAT: i32 = 110;
 const ID_SHOT_SCREEN: i32 = 130;
+const ID_SHOT_REGION: i32 = 131;
 const ID_CAPTURE_SCREEN: i32 = 132;
 const ID_STOP: i32 = 135;
 
@@ -174,6 +177,9 @@ fn prepare_settings() {
         ("screenshot_sound", 0),
         ("region_renderer", 0),
         ("sound_volume", 50),
+        // The metering previews open the microphone; snapshots and timing
+        // checks must not depend on ambient sound.
+        ("idle_level", 0),
     ] {
         set_test_dword(name, value);
     }
@@ -618,7 +624,10 @@ fn records_every_output_format_through_the_real_ui() {
         sleep(200);
         let before = files(&dir);
         command(app.native, ID_CAPTURE_SCREEN);
-        sleep(1200);
+        // The take clock starts after prepare (audio devices, screen capture and
+        // the encoder), which takes a few hundred milliseconds; the audio track
+        // is measured against the sleep below, so leave room for it.
+        sleep(1600);
         command(app.native, ID_STOP);
         let path = wait_for_new_file(&dir, &before, prefix, extension);
         wait_for_file_ready(&path);
@@ -669,5 +678,94 @@ fn a_screenshot_does_not_touch_the_clipboard_when_copy_is_off() {
         // SAFETY: The clipboard format query touches no borrowed state.
         !unsafe { IsClipboardFormatAvailable(15) }.is_ok(),
         "the screenshot put the file on the clipboard although the copy option is off"
+    );
+}
+
+/// Finds the visible area overlay of `pid`.
+fn wait_for_overlay(pid: u32) -> HWND {
+    #[derive(Default)]
+    struct Search {
+        pid: u32,
+        found: HWND,
+    }
+    unsafe extern "system" fn look(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: EnumWindows passes the live Search pointer and window handle.
+        let search = unsafe { &mut *(lparam.0 as *mut Search) };
+        let mut window_pid = 0u32;
+        // SAFETY: The handle comes from EnumWindows and the pid pointer is writable.
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut window_pid)) };
+        // SAFETY: The handle comes from EnumWindows and the call only reads it.
+        if window_pid != search.pid || !unsafe { IsWindowVisible(hwnd).as_bool() } {
+            return BOOL(1);
+        }
+        let mut title = [0u16; 128];
+        // SAFETY: The title buffer is valid for the duration of the call.
+        let length = unsafe { GetWindowTextW(hwnd, &mut title) }.max(0) as usize;
+        if String::from_utf16_lossy(&title[..length]) != "Capture Button area" {
+            return BOOL(1);
+        }
+        search.found = hwnd;
+        BOOL(0)
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut search = Search {
+            pid,
+            found: HWND::default(),
+        };
+        // SAFETY: The search struct outlives the enumeration and the callback
+        // only writes into it.
+        unsafe {
+            EnumWindows(Some(look), LPARAM(&mut search as *mut Search as isize)).ok();
+        }
+        if !search.found.is_invalid() {
+            return search.found;
+        }
+        assert!(Instant::now() < deadline, "the area overlay did not appear");
+        sleep(50);
+    }
+}
+
+/// Whether the window carries `WS_EX_TOPMOST`.
+fn window_topmost(hwnd: HWND) -> bool {
+    // SAFETY: The handle belongs to a live window of this process.
+    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+    style & WS_EX_TOPMOST.0 != 0
+}
+
+#[test]
+#[ignore = "shows and drives the real area overlay window"]
+fn the_slint_overlay_never_leaves_the_main_window_topmost() {
+    let _serial = serial();
+    prepare_settings();
+    // The Slint overlay is the renderer that used to raise the main window.
+    set_test_dword("region_renderer", 1);
+    set_test_dword("scale", 75);
+    let app = launch();
+    command(app.native, ID_SHOT_REGION);
+    let overlay = wait_for_overlay(app.child.id());
+    assert!(window_topmost(overlay), "the area overlay is not topmost");
+
+    // SAFETY: The overlay belongs to the test app and handles the key messages.
+    unsafe {
+        PostMessageW(overlay, WM_KEYDOWN, WPARAM(VK_ESCAPE.0 as usize), LPARAM(0)).ok();
+    }
+    sleep(80);
+    // SAFETY: Same window, after the message loop had a chance to see the key.
+    unsafe {
+        PostMessageW(overlay, WM_KEYUP, WPARAM(VK_ESCAPE.0 as usize), LPARAM(0)).ok();
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    // SAFETY: The handle is a window of the test app.
+    while Instant::now() < deadline && unsafe { IsWindowVisible(overlay).as_bool() } {
+        sleep(50);
+    }
+    // SAFETY: The handle is still owned by the test app.
+    // SAFETY: The handle is a window of the test app and only queried here.
+    let closed = !unsafe { IsWindowVisible(overlay).as_bool() };
+    assert!(closed, "Esc did not close the area overlay");
+    assert!(
+        !window_topmost(app.slint),
+        "the main window is left topmost after the overlay closes"
     );
 }

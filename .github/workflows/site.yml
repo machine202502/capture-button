@@ -91,6 +91,13 @@ jobs:
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             --pattern '*.nupkg' \
             --dir "$GITHUB_WORKSPACE/site/updates" --clobber
+          # The Linux feed goes to the same URL; the app asks for the channel
+          # it was packaged with. It is optional because a release published
+          # before the Linux job existed must still deploy the Windows site.
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'releases.linux.json' \
+            --dir "$GITHUB_WORKSPACE/site/updates" --clobber \
+            || echo "Release $tag has no releases.linux.json; deploying without a Linux feed."
 
       - name: Fill build hash into the site
         run: |

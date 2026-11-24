@@ -72,7 +72,10 @@ fn each_start_place_records_with_the_profile_tied_to_it() {
         overlay_for(StartPlace::ShotRegion),
         platform::region::Overlay::Screenshot
     );
-    assert_eq!(overlay_for(StartPlace::TrayArea), platform::region::Overlay::Tray);
+    assert_eq!(
+        overlay_for(StartPlace::TrayArea),
+        platform::region::Overlay::Tray
+    );
     assert!(!platform::region::Overlay::Capture.shows_video());
     assert!(!platform::region::Overlay::Screenshot.shows_video());
     assert!(platform::region::Overlay::Tray.shows_video());
@@ -185,12 +188,6 @@ fn a_camera_photo_blocks_every_capture_control() {
     assert!(!tray_item_enabled(Mode::Photo, ID_TRAY_AREA));
     assert!(!tray_item_enabled(Mode::Photo, ID_TRAY_STOP));
     assert_eq!(Mode::Photo.activity(), Activity::Saving);
-}
-
-#[test]
-fn the_tray_window_item_closes_an_open_window_and_opens_a_hidden_one() {
-    assert_eq!(tray_window_label(true), "Close window");
-    assert_eq!(tray_window_label(false), "Open window");
 }
 
 #[test]

@@ -11,14 +11,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
-pub use platform::{
-    AudioDevice, Format, Frame, OutputCategory, OutputFolders, Rect,
-};
 pub use platform::os::{
     completion_sound, copy_file_to_clipboard, copy_text_to_clipboard, cursor_monitor_rect,
     device_name, grab, grab_without_cursor, microphones, open_file, output_dir_for, output_path,
     reveal_in_folder, screenshot_sound, set_output_folders,
 };
+pub use platform::{AudioDevice, Format, Frame, OutputCategory, OutputFolders, Rect};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VideoSettings {
@@ -30,9 +28,14 @@ pub struct VideoSettings {
 pub struct AudioSettings {
     pub system: bool,
     pub microphone: bool,
+    /// Microphone id; `"Auto"` follows the current default input.
     pub device: String,
     /// Microphone gain in percent for this capture profile. 100 is unity.
     pub gain: u32,
+    /// System-audio source id; `"auto"` follows the current default output.
+    pub system_device: String,
+    /// System-audio gain in percent for this capture profile. 100 is unity.
+    pub system_gain: u32,
 }
 
 impl Default for AudioSettings {
@@ -42,6 +45,8 @@ impl Default for AudioSettings {
             microphone: true,
             device: "Auto".into(),
             gain: 100,
+            system_device: "auto".into(),
+            system_gain: 100,
         }
     }
 }
@@ -73,6 +78,9 @@ pub struct RecordOptions {
     /// Microphone gain in percent. Read on every audio callback so a change made while
     /// recording changes the mix immediately.
     pub mic_gain: Arc<AtomicU32>,
+    /// System-audio gain in percent, separate from the microphone gain. Read
+    /// on every monitor block for the same reason.
+    pub system_gain: Arc<AtomicU32>,
 }
 
 pub fn init() {
@@ -214,6 +222,7 @@ pub fn read_image(path: &Path) -> Result<Frame, String> {
                 width,
                 height,
                 data,
+                age_ns: 0,
             });
         }
     }
@@ -1044,6 +1053,14 @@ impl AnimationEncoder {
             options.set("lossless", "0");
             options.set("quality", "85");
             options.set("compression_level", "4");
+        } else {
+            // `transdiff` (on by default) stores unchanged pixels as the
+            // transparent index, which the encoder colours (0, 255, 0).
+            // Viewers that do not composite delta frames — ImageMagick's
+            // `display` is the desktop's GIF handler here — then paint the
+            // whole recording green. Cropping each frame to the part that
+            // changed (`offsetting`) keeps opaque frames small.
+            options.set("gifflags", "offsetting");
         }
         let encoder = context
             .open_with(options)
@@ -1134,6 +1151,7 @@ mod tests {
             width: 64,
             height: 64,
             data,
+            age_ns: 0,
         }
     }
 

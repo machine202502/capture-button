@@ -13,18 +13,19 @@ mod ui;
 use crate::ui::*;
 pub(crate) use media::AudioSettings;
 use media::{Format, Rect};
-pub(crate) use settings::{CaptureSettings, ProfileRef, Settings};
 use platform::geom::{Activity, TrayClick};
 use platform::i18n::{tr, trf};
 use platform::shell::{
-    ID_TRAY_AREA, ID_TRAY_AUDIO, ID_TRAY_EXIT, ID_TRAY_OPEN, ID_TRAY_SHOT, ID_TRAY_STOP,
-    ID_TRAY_VIDEO, ShellEvent, TrayBadge, TrayEntry, TrayGlyph, TIMER_ID,
+    HotkeyAction, HotkeyBinding, HotkeyChoice, HotkeyEvent, ShellEvent, TrayBadge, TrayEntry,
+    TrayGlyph, ID_TRAY_AREA, ID_TRAY_AUDIO, ID_TRAY_EXIT, ID_TRAY_OPEN, ID_TRAY_SHOT, ID_TRAY_STOP,
+    ID_TRAY_VIDEO, LEVEL_TIMER, TIMER_ID,
 };
+pub(crate) use settings::{CaptureSettings, ProfileRef, Settings};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const REPOSITORY: &str = "https://github.com/machine202502/capture-button";
 const WEBSITE: &str = "https://machine202502.github.io/capture-button/";
@@ -92,8 +93,37 @@ fn accepts_command(mode: Mode, id: i32, region_open: bool) -> bool {
         || ui::history_click(id).is_some()
 }
 
+/// The profile whose audio on/off switches `id` is.
+fn audio_toggle_profile(id: i32) -> Option<ProfileRef> {
+    match id {
+        ID_SYSTEM_AUDIO | ID_MIC => Some(ProfileRef::Capture),
+        166 | 167 => Some(ProfileRef::Area),
+        176 | 177 => Some(ProfileRef::Video),
+        ID_TRAY_AUDIO_SYSTEM | ID_TRAY_AUDIO_MIC => Some(ProfileRef::Audio),
+        _ => None,
+    }
+}
+
+/// Logs a warning once per process. A capture that cannot reach the clipboard
+/// fails on every save; one line says the same thing as a hundred.
+fn warn_once(text: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        platform::logging::warn(text);
+    }
+}
+
 fn hide_while_active(from_window: bool, setting_on: bool) -> bool {
     from_window && setting_on
+}
+
+/// Drops the photo worker and returns to `Idle`. A camera photo ends in this
+/// state whether it succeeded, failed, or never answered, because the capture
+/// panel is only enabled in `Idle`.
+fn end_photo(mode: &mut Mode, photo: &mut Option<Receiver<Result<PathBuf, String>>>) {
+    *photo = None;
+    *mode = Mode::Idle;
 }
 
 /// The window comes back when a recording that hid it ends, including a stop from the tray.
@@ -223,6 +253,25 @@ fn place_for_source(source: ProfileRef) -> StartPlace {
     }
 }
 
+/// The rectangle a full-screen video records.
+///
+/// The tray video profile may name a monitor; `"auto"` keeps the primary one.
+/// An area or a chosen source already carries its own rectangle and is never
+/// re-mapped, and audio or camera recordings have no monitor at all.
+fn recording_rect(
+    source: ProfileRef,
+    rect: Option<Rect>,
+    audio_only: bool,
+    camera: bool,
+    monitors: &[platform::screen::MonitorInfo],
+    requested: &str,
+) -> Option<Rect> {
+    if source == ProfileRef::Video && rect.is_none() && !audio_only && !camera {
+        platform::screen::monitor_rect(monitors, requested)
+    } else {
+        rect
+    }
+}
 fn recording_kind_for(audio_only: bool, region: bool, format: Format) -> RecordingKind {
     let animation = format != Format::Mkv;
     if audio_only {
@@ -254,10 +303,6 @@ fn recording_tip(kind: RecordingKind, seconds: u64) -> String {
             ("time", &format!("{:02}:{:02}", seconds / 60, seconds % 60)),
         ],
     )
-}
-
-fn tray_window_label(shown: bool) -> String {
-    tr(if shown { "Close window" } else { "Open window" })
 }
 
 fn tray_item_enabled(mode: Mode, id: i32) -> bool {
@@ -297,16 +342,33 @@ impl Mode {
     }
 }
 
+/// The two metering-only inputs behind one profile's audio card.
+#[derive(Default)]
+struct PreviewPair {
+    microphone: Option<platform::audio::AudioPreview>,
+    system: Option<platform::audio::AudioPreview>,
+}
+
 struct App {
     controls: Controls,
     settings: Settings,
     mode: Mode,
-    /// State of the main window captured when the tray menu opened.
-    tray_window_open: bool,
     session: Option<media::Session>,
     finalizer: Option<media::Finalizer>,
     live_gain: Option<Arc<AtomicU32>>,
     live_gain_id: Option<i32>,
+    live_system_gain: Option<Arc<AtomicU32>>,
+    live_system_gain_id: Option<i32>,
+    /// Peak-hold per profile, `[microphone, system]` in `ProfileRef::ALL` order.
+    meters: [[platform::audio::Meter; 2]; 4],
+    levels: [[f32; 2]; 4],
+    levels_at: Instant,
+    /// Metering-only inputs, one pair per profile; only the visible page's
+    /// profiles are open.
+    previews: [PreviewPair; 4],
+    /// The profile of the take in progress, whose bars show the real recording.
+    recording_source: Option<ProfileRef>,
+    level_timer: bool,
     live_cursor: bool,
     started: Option<Instant>,
     saving_started: Option<Instant>,
@@ -332,17 +394,24 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let settings = Settings::load();
+        let settings = Settings::load(platform::shell::hotkey_choice());
         media::set_output_folders(&settings.folders);
         Self {
             controls: Controls::new(),
             settings,
             mode: Mode::Idle,
-            tray_window_open: false,
             session: None,
             finalizer: None,
             live_gain: None,
             live_gain_id: None,
+            live_system_gain: None,
+            live_system_gain_id: None,
+            meters: Default::default(),
+            levels: [[0.0; 2]; 4],
+            levels_at: Instant::now(),
+            previews: Default::default(),
+            recording_source: None,
+            level_timer: false,
             live_cursor: true,
             started: None,
             saving_started: None,
@@ -372,6 +441,7 @@ impl App {
         self.history = settings::load_history(ui::HISTORY_COUNT as usize);
         self.refresh_history();
         self.build_tray();
+        self.apply_hotkeys();
         self.update_state();
     }
 
@@ -433,19 +503,63 @@ impl App {
             ShellEvent::Command { id, notification } => self.command(id, notification),
             ShellEvent::Timer(id) => self.on_timer(id),
             ShellEvent::TrayLeft => self.on_tray_left(),
-            ShellEvent::TrayContext { x, y } => {
-                // The menu itself has the foreground once it opens, so the state
-                // the item shows and acts on is captured right before it appears.
-                self.tray_window_open = platform::shell::main_window_open();
-                self.sync_window_item();
-                platform::shell::show_tray_menu(x, y);
-            }
             ShellEvent::Region => self.region_done(),
             ShellEvent::Ui => self.drain_ui(),
             ShellEvent::RefreshTray => self.update_state(),
             ShellEvent::Activate => self.show_window(),
             ShellEvent::Close => self.on_close(),
+            ShellEvent::Hotkey(action) => self.on_hotkey(action),
+            ShellEvent::Hotkeys(event) => self.on_hotkeys(event),
             ShellEvent::Quit => {}
+        }
+    }
+
+    fn on_hotkey(&mut self, action: HotkeyAction) {
+        platform::logging::info(format!("hotkey {action:?}"));
+        match action {
+            HotkeyAction::Area => self.command(ID_TRAY_AREA, 0),
+            HotkeyAction::Stop => self.stop_capture(),
+        }
+    }
+
+    /// Takes the answer of a hotkey request the desktop answered in its dialog.
+    ///
+    /// The settings are updated only with what the desktop reported, except
+    /// that a cancelled request leaves the previous set in place.
+    fn on_hotkeys(&mut self, event: HotkeyEvent) {
+        match event {
+            HotkeyEvent::Pending => {
+                platform::logging::info("hotkeys: waiting for the system dialog");
+                self.controls.set_hotkeys_pending(true);
+            }
+            HotkeyEvent::Applied(bindings) => {
+                platform::logging::info("hotkeys: the desktop applied the set");
+                self.controls.set_hotkeys_pending(false);
+                self.settings.set_hotkeys(&bindings);
+                self.settings.hotkeys_configured = true;
+                self.settings.save();
+                self.controls.set_hotkeys(&bindings);
+                self.log_hotkeys();
+            }
+            HotkeyEvent::Failed { message, bindings } => {
+                self.controls.set_hotkeys_pending(false);
+                self.settings.set_hotkeys(&bindings);
+                self.settings.save();
+                self.controls.set_hotkeys(&bindings);
+                platform::logging::info(format!("hotkeys: {message}"));
+                self.controls.set_text(ID_STATUS, &message);
+                self.log_hotkeys();
+            }
+            HotkeyEvent::Unavailable => {
+                platform::logging::info(
+                    "hotkeys: the desktop portal is not available; using the fallback",
+                );
+                self.controls
+                    .set_hotkey_choice(platform::shell::hotkey_choice());
+                self.controls
+                    .set_hotkeys_supported(platform::shell::hotkeys_supported());
+                self.apply_hotkeys();
+            }
         }
     }
 
@@ -453,11 +567,188 @@ impl App {
         if id == platform::shell::HISTORY_ACK_TIMER {
             self.controls.clear_history_ack();
             platform::shell::kill_timer(platform::shell::HISTORY_ACK_TIMER);
+        } else if id == LEVEL_TIMER {
+            self.update_levels();
         } else {
             self.tick();
         }
     }
 
+    /// Moves the level bars inside the audio sliders.
+    ///
+    /// While a take records, the recording profile shows the take's peaks.
+    /// When the window is open on a page with audio cards, each card's own
+    /// metering-only preview feeds its pair of bars; every other profile stays
+    /// at zero. The peak hold and fall live in [`platform::audio::Meter`].
+    fn update_levels(&mut self) {
+        let elapsed = self.levels_at.elapsed();
+        self.levels_at = Instant::now();
+        if let Some(source) = self.recording_source {
+            let (microphone, system) = platform::audio::levels();
+            self.advance_profile(source, microphone, system, elapsed);
+            for profile in ProfileRef::ALL {
+                if profile != source {
+                    self.advance_profile(profile, f32::NEG_INFINITY, f32::NEG_INFINITY, elapsed);
+                }
+            }
+        } else {
+            for profile in ProfileRef::ALL {
+                let slot = profile.index();
+                let microphone = self.previews[slot]
+                    .microphone
+                    .as_ref()
+                    .map_or(f32::NEG_INFINITY, |preview| preview.level());
+                let system = self.previews[slot]
+                    .system
+                    .as_ref()
+                    .map_or(f32::NEG_INFINITY, |preview| preview.level());
+                self.advance_profile(profile, microphone, system, elapsed);
+            }
+        }
+        self.controls.set_levels(&self.levels);
+    }
+
+    fn advance_profile(
+        &mut self,
+        profile: ProfileRef,
+        microphone: f32,
+        system: f32,
+        elapsed: Duration,
+    ) {
+        let slot = profile.index();
+        self.levels[slot][0] = self.meters[slot][0].update(microphone, elapsed);
+        self.levels[slot][1] = self.meters[slot][1].update(system, elapsed);
+    }
+
+    /// Empties every bar; no device is open outside a take or a page preview.
+    fn reset_levels(&mut self) {
+        for profile in ProfileRef::ALL {
+            self.reset_profile_levels(profile);
+        }
+        self.levels_at = Instant::now();
+        self.controls.set_levels(&self.levels);
+    }
+
+    fn reset_profile_levels(&mut self, profile: ProfileRef) {
+        let slot = profile.index();
+        self.meters[slot] = [platform::audio::Meter::new(), platform::audio::Meter::new()];
+        self.levels[slot] = [0.0; 2];
+    }
+
+    /// Starts the twenty-per-second meter timer; showing the window again
+    /// must not spawn a second one.
+    fn start_level_timer(&mut self) {
+        if self.level_timer {
+            return;
+        }
+        self.level_timer = true;
+        platform::shell::start_timer(LEVEL_TIMER, 50);
+    }
+
+    fn stop_level_timer(&mut self) {
+        if !self.level_timer {
+            return;
+        }
+        self.level_timer = false;
+        platform::shell::kill_timer(LEVEL_TIMER);
+    }
+
+    /// The profiles whose audio cards are on screen: the capture profile on the
+    /// Capture page, the three tray profiles on the Settings page.
+    fn preview_profiles(&self) -> &'static [ProfileRef] {
+        if self.controls.page() == 1 {
+            &[ProfileRef::Area, ProfileRef::Video, ProfileRef::Audio]
+        } else {
+            &[ProfileRef::Capture]
+        }
+    }
+
+    /// Opens the metering-only inputs behind the visible page's audio cards.
+    /// A device that refuses (missing, busy) only leaves its bar at zero; a take
+    /// opens it again on its own.
+    fn open_previews(&mut self) {
+        if !self.settings.show_idle_level || !self.window_shown() {
+            return;
+        }
+        for profile in self.preview_profiles() {
+            self.open_preview_pair(*profile);
+        }
+    }
+
+    fn open_preview_pair(&mut self, profile: ProfileRef) {
+        let slot = profile.index();
+        let microphone = profile.audio(&self.settings).microphone;
+        let system = profile.audio(&self.settings).system;
+        if self.previews[slot].microphone.is_none() && microphone {
+            let device = self.microphone_device_for(profile);
+            match platform::audio::open_preview(false, device.as_deref()) {
+                Ok(preview) => self.previews[slot].microphone = Some(preview),
+                Err(error) => platform::logging::warn(format!("idle level: {error}")),
+            }
+        }
+        if self.previews[slot].system.is_none() && system {
+            let device = self.system_device_for(profile);
+            match platform::audio::open_preview(true, device.as_deref()) {
+                Ok(preview) => self.previews[slot].system = Some(preview),
+                Err(error) => platform::logging::warn(format!("idle level: {error}")),
+            }
+        }
+        platform::logging::info("idle level: preview open");
+    }
+
+    /// Releases one section's metering inputs; a take and a preview never share
+    /// one, and a device change must not leave the old capture running.
+    fn close_preview_pair(&mut self, profile: ProfileRef) {
+        let slot = profile.index();
+        let microphone = self.previews[slot].microphone.take();
+        let system = self.previews[slot].system.take();
+        if microphone.is_some() || system.is_some() {
+            platform::logging::info("idle level: preview closed");
+            self.reset_profile_levels(profile);
+        }
+    }
+
+    fn close_previews(&mut self) {
+        for profile in ProfileRef::ALL {
+            self.close_preview_pair(profile);
+        }
+    }
+
+    fn refresh_previews(&mut self) {
+        self.close_previews();
+        self.open_previews();
+    }
+
+    /// Restarts one section after its device or its inputs changed. The other
+    /// sections keep their own streams.
+    fn refresh_previews_for(&mut self, profile: ProfileRef) {
+        self.close_preview_pair(profile);
+        if self.settings.show_idle_level
+            && self.window_shown()
+            && self.mode != Mode::Recording
+            && self.preview_profiles().contains(&profile)
+        {
+            self.open_preview_pair(profile);
+        }
+    }
+
+    fn microphone_device_for(&self, profile: ProfileRef) -> Option<String> {
+        let id = profile.audio(&self.settings).device.as_str();
+        if id == "Auto" {
+            None
+        } else {
+            media::device_name(id)
+        }
+    }
+
+    fn system_device_for(&self, profile: ProfileRef) -> Option<String> {
+        let id = profile.audio(&self.settings).system_device.as_str();
+        if id.eq_ignore_ascii_case("auto") {
+            None
+        } else {
+            Some(id.to_string())
+        }
+    }
     fn on_tray_left(&mut self) {
         match platform::geom::tray_click(self.mode.activity(), self.settings.tray_capture) {
             TrayClick::Stop => self.stop_capture(),
@@ -480,6 +771,7 @@ impl App {
         if id == ID_TAB || id == ID_SETTINGS_TAB {
             if matches!(self.mode, Mode::Idle | Mode::Recording) {
                 self.controls.show_page(if id == ID_TAB { 0 } else { 1 });
+                self.refresh_previews();
             }
             return;
         }
@@ -490,9 +782,27 @@ impl App {
             || id == ID_TRAY_AREA_DEVICE
             || id == ID_TRAY_VIDEO_DEVICE
             || id == ID_TRAY_AUDIO_DEVICE
+            || id == ID_SYSTEM_DEVICE
+            || id == ID_TRAY_AREA_SYSTEM_DEVICE
+            || id == ID_TRAY_VIDEO_SYSTEM_DEVICE
+            || id == ID_TRAY_AUDIO_SYSTEM_DEVICE
         {
             if notification == CBN_DROPDOWN {
                 self.controls.refresh_devices(id);
+            }
+            if notification == CBN_SELCHANGE {
+                self.controls.read_ui(&mut self.settings, true);
+                if let Some(profile) = ui::profile_for_microphone_device(id)
+                    .or_else(|| ui::profile_for_system_device(id))
+                {
+                    self.refresh_previews_for(profile);
+                }
+            }
+            return;
+        }
+        if id == ID_TRAY_VIDEO_MONITOR {
+            if notification == CBN_DROPDOWN {
+                self.controls.refresh_monitors();
             }
             if notification == CBN_SELCHANGE {
                 self.controls.read_ui(&mut self.settings, true);
@@ -581,6 +891,11 @@ impl App {
             | ID_TRAY_AUDIO_SYSTEM
             | ID_TRAY_AUDIO_MIC => {
                 self.controls.read_ui(&mut self.settings, true);
+                if id == ID_IDLE_LEVEL {
+                    self.refresh_previews();
+                } else if let Some(profile) = audio_toggle_profile(id) {
+                    self.refresh_previews_for(profile);
+                }
                 self.sync_outline();
             }
             ID_SHOT_SCREEN | ID_TRAY_SHOT => self.screenshot_screen(),
@@ -596,7 +911,13 @@ impl App {
             }
             ui::ID_CAMERA_PHOTO => self.camera_action(true),
             ui::ID_CAMERA_VIDEO => self.camera_action(false),
-            ui::ID_CAMERA_CLOSE => self.controls.close_cameras(),
+            ui::ID_CAMERA_CLOSE => {
+                // Closing the picker is a cancellation: nothing may stay queued
+                // for a camera that was never chosen.
+                self.pending_camera_action = None;
+                self.pending_cameras.clear();
+                self.controls.close_cameras();
+            }
             id if (ui::CAMERA_ROW_BASE..600).contains(&id) => {
                 self.finish_camera((id - ui::CAMERA_ROW_BASE) as usize)
             }
@@ -604,16 +925,9 @@ impl App {
                 self.finish_source((id - ui::SOURCE_ROW_BASE) as usize)
             }
             ID_STOP | ID_TRAY_STOP => self.stop_capture(),
-            ID_TRAY_OPEN => {
-                if self.tray_window_open {
-                    self.hide_window();
-                    self.tray_window_open = false;
-                } else {
-                    self.show_window();
-                    self.tray_window_open = true;
-                }
-                self.sync_window_item();
-            }
+            // The item always shows the window; closing is the window's own
+            // close button.
+            ID_TRAY_OPEN => self.show_window(),
             ID_TRAY_EXIT => self.request_exit(),
             ID_STATUS if notification == 0 => self.open_saved(),
             id if notification == 0 => {
@@ -647,6 +961,101 @@ impl App {
         if persist {
             self.settings.save();
         }
+    }
+
+    fn set_system_gain(&mut self, id: i32, value: u32, persist: bool) {
+        let value = value.min(ui::MIC_GAIN_MAX);
+        let Some(source) = ui::profile_for_system_gain(id) else {
+            return;
+        };
+        self.settings.audio_mut(source).system_gain = value;
+        self.controls.set_system_gain(id, value);
+        if self.live_system_gain_id == Some(id) {
+            if let Some(gain) = &self.live_system_gain {
+                gain.store(value, Ordering::SeqCst);
+            }
+        }
+        if persist {
+            self.settings.save();
+        }
+    }
+
+    /// Rebuilds the global key bindings from the saved settings.
+    ///
+    /// With [`HotkeyChoice::SystemDialog`] the backend asks the desktop, and the
+    /// answer arrives later as a `ShellEvent::Hotkeys`; on Wayland that dialog
+    /// is the only path. The fallback grabs the keys on an X11 connection, and
+    /// without one the capability check keeps the Settings section hidden and
+    /// this returns early.
+    fn apply_hotkeys(&mut self) {
+        if !platform::shell::hotkeys_supported() {
+            return;
+        }
+        self.log_hotkeys();
+        if let Err(error) = platform::shell::register_hotkeys(&self.hotkey_set()) {
+            platform::logging::warn(format!("hotkeys: {error}"));
+            self.controls.set_text(ID_STATUS, &error);
+        }
+    }
+
+    /// The set to hand the backend.
+    ///
+    /// A session where the desktop owns the combinations opens its dialog once,
+    /// and an empty set would give it nothing to offer. Until that dialog has
+    /// been answered, an unset row is proposed with the table's default
+    /// combination; after it, an empty row is a deliberate "no hotkey" and stays
+    /// empty.
+    fn hotkey_set(&self) -> Vec<HotkeyBinding> {
+        let propose = platform::shell::hotkey_choice() == HotkeyChoice::SystemDialog
+            && !self.settings.hotkeys_configured;
+        self.settings
+            .hotkeys
+            .iter()
+            .map(|binding| {
+                if binding.is_set() || !propose {
+                    binding.clone()
+                } else {
+                    HotkeyBinding {
+                        action: binding.action,
+                        combination: binding.action.def().default_trigger.to_string(),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Asks the desktop for a new combination of `action`, keeping the rest of
+    /// the set. The answer arrives as a `ShellEvent::Hotkeys`.
+    fn change_hotkey(&mut self, action: HotkeyAction) {
+        if !platform::shell::hotkeys_supported() {
+            return;
+        }
+        self.log_hotkeys();
+        let mut bindings = self.hotkey_set();
+        // The row the user asked about has to be in the set for the desktop to
+        // ask again; a cleared row is proposed with its default combination.
+        if let Some(binding) = bindings.iter_mut().find(|binding| binding.action == action) {
+            if !binding.is_set() {
+                binding.combination = action.def().default_trigger.to_string();
+            }
+        }
+        if let Err(error) = platform::shell::change_hotkeys(action, &bindings) {
+            platform::logging::warn(format!("hotkeys: {error}"));
+            self.controls.set_text(ID_STATUS, &error);
+        }
+    }
+
+    fn log_hotkeys(&self) {
+        let saved = platform::shell::hotkey_defs()
+            .iter()
+            .map(|def| format!("{}={:?}", def.id, self.settings.hotkey(def.action)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        platform::logging::info(format!(
+            "hotkeys: {:?} supported={} {saved}",
+            platform::shell::hotkey_choice(),
+            platform::shell::hotkeys_supported()
+        ));
     }
 
     fn capture_source(&mut self, screenshot: bool) {
@@ -705,6 +1114,15 @@ impl App {
         }
     }
 
+    /// Leaves the photo mode whatever happened to the worker: a failure, a
+    /// missing answer or a finished frame. Every capture button is gated on
+    /// `Mode::Idle`, so an error that stayed in `Mode::Photo` would disable the
+    /// whole capture panel until the application restarted.
+    fn end_photo(&mut self) {
+        end_photo(&mut self.mode, &mut self.camera_photo);
+        self.saving_started = None;
+    }
+
     fn start_camera(&mut self, index: &camera::CameraIndex, photo: bool) {
         if self.mode != Mode::Idle || self.camera_photo.is_some() {
             return;
@@ -735,14 +1153,14 @@ impl App {
 
     fn finish_camera_photo(&mut self, result: Result<PathBuf, String>) {
         platform::shell::kill_timer(TIMER_ID);
-        self.camera_photo = None;
-        self.saving_started = None;
-        self.mode = Mode::Idle;
+        self.end_photo();
+        // The buttons come back before the failure is reported: the report is a
+        // modal dialog, and the state must not depend on it being dismissed.
+        self.update_state();
         match result {
             Ok(path) => self.screenshot_saved(path),
             Err(error) => self.error(&error),
         }
-        self.update_state();
         if !self.window_shown() {
             platform::shell::trim_working_set();
         }
@@ -867,12 +1285,11 @@ impl App {
         }
         let (source, _) = start_plan(place);
         self.region_source = source;
-        if platform::region::OverlayRenderer::from_setting(self.settings.region_renderer)
-            == platform::region::OverlayRenderer::Slint
-        {
-            // The hidden setting selects the Slint renderer. It must never make
-            // the overlay unusable: anything that goes wrong here leaves the
-            // work to the native overlay below.
+        let renderer = platform::region::renderer_by_setting(self.settings.region_renderer);
+        if renderer.kind == platform::region::RendererKind::Slint {
+            // The selected renderer is drawn by the application. It must never
+            // make the overlay unusable: anything that goes wrong here leaves
+            // the work to the native overlay below.
             if let Some(model) = region_model(overlay, !recording) {
                 if ui::open_region_overlay(model) {
                     platform::logging::info("area overlay: slint renderer");
@@ -923,14 +1340,16 @@ impl App {
                 }
                 let path = match path {
                     Some(path) => path,
-                    None => match media::output_path(media::OutputCategory::Screenshots, "Image", "png")
-                    {
-                        Ok(path) => path,
-                        Err(error) => {
-                            self.error(&error);
-                            return;
+                    None => {
+                        match media::output_path(media::OutputCategory::Screenshots, "Image", "png")
+                        {
+                            Ok(path) => path,
+                            Err(error) => {
+                                self.error(&error);
+                                return;
+                            }
                         }
-                    },
+                    }
                 };
                 match media::save_frame(&frame, &path) {
                     Ok(()) => self.screenshot_saved(path),
@@ -997,6 +1416,20 @@ impl App {
         let camera = self.pending_camera.take();
         self.conceal_for_ui(hide);
         self.region_outline = region && !audio_only && camera.is_none();
+        let monitors =
+            if source == ProfileRef::Video && rect.is_none() && !audio_only && camera.is_none() {
+                platform::screen::monitors()
+            } else {
+                Vec::new()
+            };
+        let rect = recording_rect(
+            source,
+            rect,
+            audio_only,
+            camera.is_some(),
+            &monitors,
+            &self.settings.tray_video.monitor,
+        );
         self.record_rect = if audio_only || camera.is_some() {
             None
         } else {
@@ -1010,6 +1443,8 @@ impl App {
         self.live_cursor = profile.cursor;
         let mic_gain = Arc::new(AtomicU32::new(profile.audio.gain));
         let gain_id = ui::microphone_control(source);
+        let system_gain = Arc::new(AtomicU32::new(profile.audio.system_gain));
+        let system_gain_id = ui::system_gain_control(source);
         let options = media::RecordOptions {
             profile,
             rect: self.record_rect,
@@ -1022,12 +1457,17 @@ impl App {
             show_card: self.settings.show_card,
             cursor: self.live_cursor,
             mic_gain: mic_gain.clone(),
+            system_gain: system_gain.clone(),
         };
+        // A preview holds the same device; release it before the take opens it.
+        self.close_previews();
         match media::Session::start(options) {
             Ok(session) => {
                 self.session = Some(session);
                 self.live_gain = Some(mic_gain);
                 self.live_gain_id = Some(gain_id);
+                self.live_system_gain = Some(system_gain);
+                self.live_system_gain_id = Some(system_gain_id);
                 self.started = Some(Instant::now());
                 self.last_second = u64::MAX;
                 self.recording_kind = if camera.is_some() {
@@ -1036,13 +1476,22 @@ impl App {
                     recording_kind_for(audio_only, region, recorded_format)
                 };
                 self.mode = Mode::Recording;
+                self.recording_source = Some(source);
                 self.update_state();
                 self.sync_outline();
                 platform::shell::start_timer(TIMER_ID, 200);
+                // Twenty updates a second: the level bars read the peaks the
+                // audio callbacks publish and keep their own peak hold.
+                self.start_level_timer();
             }
             Err(error) => {
                 self.live_gain = None;
                 self.live_gain_id = None;
+                self.live_system_gain = None;
+                self.live_system_gain_id = None;
+                self.recording_source = None;
+                self.reset_levels();
+                self.refresh_previews();
                 self.record_rect = None;
                 self.region_outline = false;
                 self.outline.hide();
@@ -1076,7 +1525,13 @@ impl App {
             return;
         }
         platform::shell::kill_timer(TIMER_ID);
+        if !self.window_shown() {
+            self.stop_level_timer();
+        }
+        self.recording_source = None;
+        self.reset_levels();
         self.live_gain = None;
+        self.live_system_gain = None;
         self.record_rect = None;
         self.region_outline = false;
         self.outline.hide();
@@ -1162,6 +1617,7 @@ impl App {
                         }
                         self.restore_window();
                         self.update_state();
+                        self.refresh_previews();
                         if !self.window_shown() {
                             platform::shell::trim_working_set();
                         }
@@ -1183,11 +1639,13 @@ impl App {
         self.session = None;
         self.finalizer = None;
         self.live_gain = None;
+        self.live_system_gain = None;
         self.mode = Mode::Idle;
         self.saved_path = None;
-        self.error(error);
         self.restore_window();
         self.update_state();
+        self.refresh_previews();
+        self.error(error);
         if self.quit_after_save {
             self.request_exit();
         }
@@ -1206,7 +1664,7 @@ impl App {
         self.refresh_history();
         if self.settings.clipboard {
             if let Err(error) = media::copy_file_to_clipboard(&path) {
-                platform::logging::warn(format!("copy file to clipboard failed: {error}"));
+                warn_once(&format!("copy file to clipboard failed: {error}"));
             }
         }
     }
@@ -1313,7 +1771,16 @@ impl App {
     fn error(&self, text: &str) {
         platform::logging::error(text);
         self.controls.set_text(ID_STATUS, text);
-        platform::shell::show_error(text);
+        // The dialog blocks the thread it is shown from (`zenity` on Linux waits
+        // until the user closes it, and a hidden window offers nothing to
+        // close). Reporting from the loop would freeze the capture panel while
+        // the dialog is up, so it runs beside the loop and the state the caller
+        // has already restored stays live.
+        let text = text.to_string();
+        std::thread::Builder::new()
+            .name("CaptureButton-error".into())
+            .spawn(move || platform::shell::show_error(&text))
+            .ok();
     }
 
     fn conceal_for_ui(&mut self, from_window: bool) {
@@ -1323,6 +1790,8 @@ impl App {
         let visible = ui::visible();
         self.restore_visible = remember_restore(self.restore_visible, visible);
         ui::hide();
+        self.stop_level_timer();
+        self.close_previews();
     }
 
     fn restore_window(&mut self) {
@@ -1346,6 +1815,7 @@ impl App {
 
     fn refresh_tray_texts(&mut self) {
         let items = [
+            (ID_TRAY_OPEN, "Open window"),
             (ID_TRAY_AREA, "Select area"),
             (ID_TRAY_VIDEO, "Record video"),
             (ID_TRAY_AUDIO, "Record audio"),
@@ -1358,18 +1828,14 @@ impl App {
         for (id, key) in items {
             platform::shell::set_tray_text(id, &tr(key));
         }
-        self.sync_window_item();
     }
 
-    fn sync_window_item(&self) {
-        platform::shell::set_tray_text(ID_TRAY_OPEN, &tray_window_label(self.tray_window_open));
-    }
-
-    fn show_window(&self) {
+    fn show_window(&mut self) {
         platform::logging::info("window shown");
         platform::shell::restore_app_window();
         ui::show(&self.controls);
-        self.sync_window_item();
+        self.start_level_timer();
+        self.refresh_previews();
     }
 
     fn hide_window(&mut self) {
@@ -1377,7 +1843,8 @@ impl App {
         self.controls.read_ui(&mut self.settings, true);
         platform::logging::info("window hidden");
         ui::hide();
-        self.sync_window_item();
+        self.stop_level_timer();
+        self.close_previews();
         if self.mode == Mode::Idle {
             // Nothing is playing: give the working set back to the system. The
             // message loop still waits with zero wakeups, and the pages fault
@@ -1387,6 +1854,8 @@ impl App {
     }
 
     fn request_exit(&mut self) {
+        self.stop_level_timer();
+        self.close_previews();
         if self.mode == Mode::Recording {
             self.quit_after_save = true;
             self.stop_capture();
@@ -1410,6 +1879,14 @@ impl App {
             match request {
                 ui::UiRequest::Command { id, notification } => self.command(id, notification),
                 ui::UiRequest::Slider { id, value, persist } => self.slider(id, value, persist),
+                ui::UiRequest::HotkeysChanged => {
+                    self.controls.read_ui(&mut self.settings, true);
+                    self.apply_hotkeys();
+                }
+                ui::UiRequest::HotkeyChange(action) => {
+                    self.controls.read_ui(&mut self.settings, true);
+                    self.change_hotkey(action);
+                }
                 ui::UiRequest::CloseRequested => {
                     if self.settings.close_tray {
                         self.hide_window();
@@ -1424,6 +1901,11 @@ impl App {
     fn slider(&mut self, id: i32, value: u32, persist: bool) {
         if ui::profile_for_microphone(id).is_some() {
             self.set_mic_gain(id, value, persist);
+            self.controls.read_ui(&mut self.settings, persist);
+            return;
+        }
+        if ui::profile_for_system_gain(id).is_some() {
+            self.set_system_gain(id, value, persist);
             self.controls.read_ui(&mut self.settings, persist);
             return;
         }
@@ -1486,7 +1968,7 @@ fn main() {
     if !platform::shell::init() {
         return;
     }
-    platform::i18n::init(&Settings::load().ui_language);
+    platform::i18n::init(&Settings::load(platform::shell::hotkey_choice()).ui_language);
     platform::logging::init();
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -1509,3 +1991,111 @@ fn main() {
 
 #[cfg(test)]
 mod ui_tests;
+
+#[cfg(test)]
+mod photo_tests {
+    use super::*;
+
+    /// A camera photo that was started and has not answered yet.
+    fn running_photo() -> (Mode, Option<Receiver<Result<PathBuf, String>>>) {
+        let (_worker, answer) = std::sync::mpsc::channel();
+        (Mode::Photo, Some(answer))
+    }
+
+    /// Every button that starts a capture, and the tray rows that do the same.
+    const CAPTURE_COMMANDS: [i32; 7] = [
+        ID_SHOT_SCREEN,
+        ID_SHOT_SOURCE,
+        ID_SHOT_REGION,
+        ID_TRAY_AREA,
+        ID_TRAY_SHOT,
+        ui::ID_CAMERA_PHOTO,
+        ui::ID_CAMERA_VIDEO,
+    ];
+
+    #[test]
+    fn a_photo_that_is_running_disables_every_capture_command() {
+        let (mode, photo) = running_photo();
+        assert!(photo.is_some());
+        for id in CAPTURE_COMMANDS {
+            assert!(!accepts_command(mode, id, false), "{id}");
+        }
+    }
+
+    /// A camera failure reaches the loop as an `Err` from the worker, and the
+    /// state must leave `Mode::Photo` even though a modal error dialog follows.
+    #[test]
+    fn a_failed_photo_returns_to_idle_and_reenables_every_capture_command() {
+        let (mut mode, mut photo) = running_photo();
+        end_photo(&mut mode, &mut photo);
+        assert_eq!(mode, Mode::Idle);
+        assert!(photo.is_none());
+        for id in CAPTURE_COMMANDS {
+            assert!(accepts_command(mode, id, false), "{id}");
+            assert!(tray_item_enabled(mode, id), "{id}");
+        }
+    }
+
+    fn monitor(id: &str, x: i32, width: u32, primary: bool) -> platform::screen::MonitorInfo {
+        platform::screen::MonitorInfo {
+            id: id.into(),
+            name: id.into(),
+            width,
+            height: 800,
+            primary,
+            x,
+            y: 0,
+        }
+    }
+
+    #[test]
+    fn a_full_screen_video_takes_the_chosen_monitor_but_an_area_keeps_its_rect() {
+        let monitors = [
+            monitor("LEFT", 0, 640, false),
+            monitor("RIGHT", 640, 1280, true),
+        ];
+        assert_eq!(
+            recording_rect(ProfileRef::Video, None, false, false, &monitors, "LEFT"),
+            Some(Rect {
+                x: 0,
+                y: 0,
+                w: 640,
+                h: 800
+            })
+        );
+        assert_eq!(
+            recording_rect(ProfileRef::Video, None, false, false, &monitors, "auto"),
+            Some(Rect {
+                x: 640,
+                y: 0,
+                w: 1280,
+                h: 800
+            })
+        );
+        let area = Rect {
+            x: 10,
+            y: 20,
+            w: 300,
+            h: 200,
+        };
+        assert_eq!(
+            recording_rect(
+                ProfileRef::Video,
+                Some(area),
+                false,
+                false,
+                &monitors,
+                "LEFT"
+            ),
+            Some(area)
+        );
+        assert_eq!(
+            recording_rect(ProfileRef::Capture, None, false, false, &monitors, "LEFT"),
+            None
+        );
+        assert_eq!(
+            recording_rect(ProfileRef::Video, None, true, false, &monitors, "LEFT"),
+            None
+        );
+    }
+}

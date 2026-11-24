@@ -4,9 +4,12 @@
 //! registry or Velopack. OS-neutral vocabulary and policy live in
 //! `platform-core`, which this crate builds on.
 
+#![cfg(windows)]
 #![allow(unused_must_use)]
 
+pub mod audio;
 pub mod gdiplus;
+pub mod camera;
 pub mod i18n;
 pub mod os;
 pub mod outline;

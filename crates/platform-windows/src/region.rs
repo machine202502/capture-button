@@ -13,8 +13,9 @@ use platform_core::types::{Frame, Rect};
 pub use platform_core::region::{Outcome, Overlay};
 
 use platform_core::region::{
-    caption, handles, icon, role_enabled, text_commit_box, Action, Button, Drag,
-    FontSeed, Handle, Key, Metrics, Model, Point, Role, Selection, Shape, ShapeKind, Tool,
+    caption, handles, icon, role_enabled, text_commit_box, Action, Button, Drag, FontSeed, Handle,
+    Key, Metrics, Model, Point, Renderer, RendererKind, Renderers, Role, Selection, Shape,
+    ShapeKind, Tool,
 };
 use std::path::PathBuf;
 use windows::core::{w, PCWSTR};
@@ -737,6 +738,35 @@ fn cursor_screen() -> (i32, i32) {
 }
 
 /// The rectangle of every display, in the order Windows enumerates them.
+/// The native overlay covers the screen without asking the window manager
+/// for fullscreen; it is a topmost window.
+pub fn overlay_fullscreen() -> bool {
+    false
+}
+
+/// The overlay renderers Windows offers: the native window and the Slint
+/// overlay the application draws.
+static RENDERERS: [Renderer; 2] = [
+    Renderer {
+        id: 0,
+        name: "GDI",
+        kind: RendererKind::Native,
+    },
+    Renderer {
+        id: 1,
+        name: "Slint",
+        kind: RendererKind::Slint,
+    },
+];
+
+/// The overlay renderers this platform offers, the native one first.
+pub fn overlay_renderers() -> Renderers {
+    Renderers {
+        available: &RENDERERS,
+        default: 0,
+    }
+}
+
 pub fn monitor_rects() -> Vec<Rect> {
     // SAFETY: The enumerator calls this once per monitor. The Vec behind data stays alive until EnumDisplayMonitors returns.
     unsafe extern "system" fn collect(
@@ -785,9 +815,13 @@ pub fn monitor_rects() -> Vec<Rect> {
 }
 
 pub fn suggested_image_path() -> String {
-    crate::os::output_path(platform_core::types::OutputCategory::Screenshots, "Image", "png")
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "Image.png".into())
+    crate::os::output_path(
+        platform_core::types::OutputCategory::Screenshots,
+        "Image",
+        "png",
+    )
+    .map(|path| path.display().to_string())
+    .unwrap_or_else(|_| "Image.png".into())
 }
 
 pub fn save_dialog() -> Option<PathBuf> {
@@ -1188,7 +1222,12 @@ fn render(region: &mut Region) {
     let memory = region.back_dc;
     blit_frame(memory, &region.model.frame);
     draw_dim(memory, region);
-    for shape in region.model.shapes.iter().chain(region.model.current.iter()) {
+    for shape in region
+        .model
+        .shapes
+        .iter()
+        .chain(region.model.current.iter())
+    {
         draw_shape(memory, shape, Point { x: 0, y: 0 });
     }
     if let Some(selection) = region.model.selected() {
@@ -1222,8 +1261,7 @@ fn render(region: &mut Region) {
             }
         }
         draw_badge(memory, region, selection);
-    } else if region.model.buttons.iter().all(|button| !button.shown)
-        || region.model.drag.is_none()
+    } else if region.model.buttons.iter().all(|button| !button.shown) || region.model.drag.is_none()
     {
         draw_hint(memory, region);
     }
@@ -1677,7 +1715,14 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
                 16.0,
                 16.0,
             );
-            gp.stroke_ellipse(palette().WHITE, 2.0, (cx - 8) as f32, (cy - 8) as f32, 16.0, 16.0);
+            gp.stroke_ellipse(
+                palette().WHITE,
+                2.0,
+                (cx - 8) as f32,
+                (cy - 8) as f32,
+                16.0,
+                16.0,
+            );
         } else {
             unsafe {
                 // SAFETY: The dot brush and ring pen are deleted before return.
@@ -1757,8 +1802,13 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
                     SetBkMode(dc, TRANSPARENT);
                     SetTextColor(dc, ink);
                 }
-                if !draw_glyph_centered(dc, region.icon_font, glyph, button.x + button.w / 2, center_y)
-                {
+                if !draw_glyph_centered(
+                    dc,
+                    region.icon_font,
+                    glyph,
+                    button.x + button.w / 2,
+                    center_y,
+                ) {
                     unsafe {
                         // SAFETY: The DC is the overlay DC and the font is restored before return.
                         let old = SelectObject(dc, region.icon_font);
@@ -1769,7 +1819,12 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
                             right: button.x + button.w,
                             bottom: button.y + button.h,
                         };
-                        DrawTextW(dc, &mut wide, &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                        DrawTextW(
+                            dc,
+                            &mut wide,
+                            &mut rect,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                        );
                         SelectObject(dc, old);
                     }
                 }
@@ -1794,16 +1849,15 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
                         right: button.x + button.w,
                         bottom: button.y + button.h,
                     };
-                    DrawTextW(dc, &mut text, &mut rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                    DrawTextW(
+                        dc,
+                        &mut text,
+                        &mut rect,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                    );
                     SelectObject(dc, old);
                 }
-                if !draw_glyph_centered(
-                    dc,
-                    region.icon_font,
-                    glyph,
-                    left + icon_w / 2,
-                    center_y,
-                ) {
+                if !draw_glyph_centered(dc, region.icon_font, glyph, left + icon_w / 2, center_y) {
                     unsafe {
                         // SAFETY: The DC is the overlay DC and the font is restored before return.
                         let old = SelectObject(dc, region.icon_font);
@@ -1814,7 +1868,12 @@ fn draw_button(dc: HDC, region: &Region, button: &Button) {
                             right: left + icon_w,
                             bottom: button.y + button.h,
                         };
-                        DrawTextW(dc, &mut wide, &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                        DrawTextW(
+                            dc,
+                            &mut wide,
+                            &mut rect,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                        );
                         SelectObject(dc, old);
                     }
                 }
@@ -1896,12 +1955,7 @@ fn draw_shape_aa(gp: &crate::gdiplus::Graphics, shape: &Shape, offset: Point) {
     } else {
         shape.width
     };
-    let p = |point: Point| {
-        (
-            (point.x + offset.x) as f32,
-            (point.y + offset.y) as f32,
-        )
-    };
+    let p = |point: Point| ((point.x + offset.x) as f32, (point.y + offset.y) as f32);
     match &shape.kind {
         ShapeKind::Pen(points) | ShapeKind::Marker(points) => {
             let points: Vec<(f32, f32)> = points.iter().copied().map(p).collect();
@@ -2552,6 +2606,7 @@ mod tests {
             width: 64,
             height: 64,
             data: vec![0; 64 * 64 * 4],
+            age_ns: 0,
         };
         let dot = Shape {
             kind: ShapeKind::Marker(vec![Point { x: 32, y: 32 }]),
@@ -2560,11 +2615,7 @@ mod tests {
             font_size: 16,
             font_name: "Segoe UI".into(),
         };
-        assert!(draw_annotations(
-            &mut frame,
-            &[dot],
-            Point { x: 0, y: 0 }
-        ));
+        assert!(draw_annotations(&mut frame, &[dot], Point { x: 0, y: 0 }));
         let colors: std::collections::HashSet<[u8; 4]> = frame
             .data
             .as_chunks::<4>()
@@ -2580,11 +2631,27 @@ mod tests {
     }
 
     #[test]
+    fn windows_offers_the_native_and_slint_renderers() {
+        let renderers = overlay_renderers();
+        assert_eq!(renderers.available.len(), 2);
+        assert_eq!(
+            (renderers.available[0].id, renderers.available[0].kind),
+            (0, RendererKind::Native)
+        );
+        assert_eq!(
+            (renderers.available[1].id, renderers.available[1].kind),
+            (1, RendererKind::Slint)
+        );
+        assert_eq!(renderers.default, 0);
+    }
+
+    #[test]
     fn annotations_are_composited_into_the_frame() {
         let mut frame = Frame {
             width: 8,
             height: 8,
             data: vec![255; 8 * 8 * 4],
+            age_ns: 0,
         };
         let shape = Shape {
             kind: ShapeKind::Line(Point { x: 0, y: 0 }, Point { x: 7, y: 7 }),
@@ -2598,24 +2665,16 @@ mod tests {
         let pixels = frame.data.as_chunks::<4>().0;
 
         assert!(
-
             pixels.iter().any(|pixel| pixel[..3] != [255, 255, 255]),
-
             "the stroke never reached the frame"
-
         );
 
         assert!(
-
             pixels.iter().all(|pixel| pixel[3] == 255),
-
             "a stroke pixel was stored with zero alpha and would punch a hole"
-
         );
-
     }
 }
-
 
 #[test]
 fn a_glyph_is_centred_on_its_ink() {

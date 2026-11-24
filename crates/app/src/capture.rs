@@ -13,7 +13,7 @@ use platform::screen::{
     Window,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -24,6 +24,16 @@ fn microphone_name(options: &RecordOptions) -> Option<String> {
         None
     } else {
         media::device_name(id)
+    }
+}
+
+/// The sink `parec` should record; `None` follows the current default output.
+fn system_device_name(options: &RecordOptions) -> Option<&str> {
+    let id = options.profile.audio.system_device.as_str();
+    if id.eq_ignore_ascii_case("auto") {
+        None
+    } else {
+        Some(id)
     }
 }
 
@@ -94,14 +104,22 @@ fn record(
     match prepare(&options, &stop) {
         Ok(session) => {
             let partial = session.scratch.clone();
-            let animate = session.animate;
+            // The caller gives up after the eight-second start timeout and
+            // cancels a take whose first frame never arrived (a portal pick can
+            // sit in `prepare` much longer). Such a take must not be published:
+            // it would be a one-frame file the user reads as broken.
+            if stop.load(Ordering::SeqCst) {
+                drop(session);
+                let _ = std::fs::remove_file(&partial);
+                return Err(tr("Capture did not start"));
+            }
             let _ = ready.send(Ok(()));
             match session.run(options, stop) {
                 Ok(prepared) => Ok(prepared),
                 Err(error) => {
-                    if !animate {
-                        let _ = std::fs::remove_file(&partial);
-                    }
+                    // Whatever is left is scratch: the final file is only
+                    // published by `Live::run` on success.
+                    let _ = std::fs::remove_file(&partial);
                     Err(error)
                 }
             }
@@ -187,7 +205,26 @@ impl Live {
             }
             let mixed = mix_from(&mut queues, *cursor, until, 48_000);
             if mixed.is_empty() {
-                return Ok(());
+                // The final drain asks for everything (`u64::MAX`); it must not
+                // pad silence forever.
+                if until == u64::MAX {
+                    return Ok(());
+                }
+                // No device has delivered anything up to `until` yet: the
+                // timeline is silence, so the track keeps the recording's
+                // duration instead of ending at the last delivered sample.
+                let frames = until.saturating_sub(*cursor).min(48_000);
+                if frames == 0 {
+                    return Ok(());
+                }
+                let silence = vec![0.0f32; frames as usize * 2];
+                self.writer
+                    .push_audio_at(cursor.saturating_sub(record_from), &silence)?;
+                *cursor += frames;
+                if frames < 48_000 {
+                    return Ok(());
+                }
+                continue;
             }
             let frames = (mixed.len() / 2) as u64;
             self.writer
@@ -207,6 +244,11 @@ impl Live {
     }
 
     fn run(mut self, options: RecordOptions, stop: Arc<AtomicBool>) -> Result<Prepared, String> {
+        // Between `prepare` and this call the caller can still cancel: the take
+        // never started, so it must leave no file behind at all.
+        if stop.load(Ordering::SeqCst) {
+            return Err(tr("Capture did not start"));
+        }
         let origin_ns = self.clock.elapsed().as_nanos();
         let record_from = platform::geom::sample_index(origin_ns, 48_000);
         for input in &self.inputs {
@@ -225,10 +267,10 @@ impl Live {
             let mut fate = SourceFate::Live;
             if !options.audio_only {
                 if let Some(source) = self.camera.as_mut() {
+                    // `CameraSource::open` has already waited for the stream to
+                    // start, so a failed read here is a real fault.
                     match source.frame() {
-                        Ok(frame) => {
-                            self.last = Some(fit(frame, self.rect.w, self.rect.h));
-                        }
+                        Ok(frame) => self.last = Some(fit(frame, self.rect.w, self.rect.h)),
                         Err(error) => break Err(error),
                     }
                 } else {
@@ -276,12 +318,19 @@ impl Live {
                     }
                 }
             }
+            // The latest frame was captured `age_ns` before the loop could read
+            // it, so its slot belongs that much earlier. A platform that cannot
+            // tell the age reports 0 and the frame is placed at the read time.
+            let age_ns = self
+                .last
+                .as_ref()
+                .map_or(0, |frame| u128::from(frame.age_ns));
             let since_run = self
                 .clock
                 .elapsed()
                 .as_nanos()
                 .saturating_sub(origin_ns)
-                .saturating_sub(200_000_000);
+                .saturating_sub(age_ns);
             let slot = frame_slot(since_run, fps);
             let horizon = if options.audio_only {
                 platform::geom::sample_index(self.clock.elapsed().as_nanos(), 48_000)
@@ -331,7 +380,16 @@ impl Live {
                 next_deadline = now;
             }
         };
-        let flush_result = self.pull_audio(&mut cursor, record_from, u64::MAX);
+        // Stop the sources first: `finish` gives each device the period it has
+        // captured but not delivered yet, so the flush below carries the last
+        // moments of the take instead of dropping them at Stop.
+        for input in &mut self.inputs {
+            input.finish();
+        }
+        // The devices are paused, so nothing is still in flight: draining up to
+        // the stop clock lets a silent track end at the recording's length.
+        let flush_until = platform::geom::sample_index(self.clock.elapsed().as_nanos(), 48_000);
+        let flush_result = self.pull_audio(&mut cursor, record_from, flush_until);
         self.inputs.clear();
         if let Some(source) = &mut self.video {
             source.stop();
@@ -420,9 +478,9 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
     if audio_requested && options.profile.audio.system {
         inputs.push(open_stream(
             true,
-            None,
+            system_device_name(options),
             clock,
-            Arc::new(AtomicU32::new(100)),
+            options.system_gain.clone(),
         )?);
     }
     if audio_requested && options.profile.audio.microphone {
@@ -515,6 +573,7 @@ fn prepare(options: &RecordOptions, _stop: &AtomicBool) -> Result<Live, String> 
                 width: rect.w,
                 height: rect.h,
                 data: vec![0; rect.w as usize * rect.h as usize * 4],
+                age_ns: 0,
             });
         // An odd window size is locked to the next even size. The stored frame must already
         // be that size, or the encoder slice panics and the release build aborts.
@@ -579,8 +638,13 @@ impl Session {
                 Err(error)
             }
             Err(_) => {
+                // The worker is still inside `prepare` — on Wayland that can be a
+                // portal pick waiting for the user. Joining it here froze the
+                // window until the picker closed. Report the failure at once and
+                // detach the worker: it deletes its scratch as soon as it sees
+                // the stop flag and publishes nothing.
                 stop.store(true, Ordering::SeqCst);
-                let _ = thread.join();
+                drop(thread);
                 Err(tr("Capture did not start"))
             }
         }
@@ -685,6 +749,7 @@ fn fit_into(frame: Frame, width: u32, height: u32) -> Frame {
     } else {
         (frame.width.min(width), frame.height.min(height))
     };
+    let age_ns = frame.age_ns;
     let scaled = if sw == frame.width && sh == frame.height {
         frame
     } else {
@@ -703,6 +768,7 @@ fn fit_into(frame: Frame, width: u32, height: u32) -> Frame {
         width,
         height,
         data: out,
+        age_ns,
     }
 }
 
@@ -721,6 +787,7 @@ fn stretch(frame: &Frame, width: u32, height: u32) -> Frame {
         width,
         height,
         data,
+        age_ns: frame.age_ns,
     }
 }
 
@@ -731,6 +798,7 @@ fn no_signal(width: u32, height: u32) -> Frame {
             width: *source_w,
             height: *source_h,
             data: pixels.clone(),
+            age_ns: 0,
         },
         width,
         height,
@@ -921,6 +989,7 @@ mod tests {
             width: 800,
             height: 600,
             data: vec![9, 8, 7, 255],
+            age_ns: 0,
         };
         let fitted = fit_into(torn, 640, 480);
         assert_eq!((fitted.width, fitted.height), (640, 480));
@@ -930,6 +999,7 @@ mod tests {
                 width: 320,
                 height: 180,
                 data: vec![1, 2, 3, 4],
+                age_ns: 0,
             },
             200,
             100,
@@ -944,6 +1014,7 @@ mod tests {
             width: 4,
             height: 2,
             data: [255u8, 0, 0, 255].repeat(8),
+            age_ns: 0,
         };
         let fitted = fit_into(source, 8, 4);
         assert_eq!(
@@ -952,5 +1023,135 @@ mod tests {
         );
         assert!(fitted.data.chunks(4).any(|pixel| pixel[..3] == [0, 0, 0]));
         assert!(fitted.data.chunks(4).any(|pixel| pixel[0] == 255));
+    }
+
+    /// A start the caller already gave up on must not leave a one-frame video
+    /// behind: that is the file a user reads as a broken recording.
+    #[test]
+    fn a_take_cancelled_before_the_first_frame_is_never_published() {
+        use super::Live;
+        use crate::media::{
+            self, AudioSettings, Format, Profile, RecordOptions, Rect, VideoSettings, VideoWriter,
+        };
+        use std::sync::atomic::AtomicU32;
+        use std::sync::Arc;
+
+        media::init();
+        let dir =
+            std::env::temp_dir().join(format!("CaptureButton-cancelled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            w: 16,
+            h: 16,
+        };
+        let output = dir.join("take.mkv");
+        let scratch = dir.join("take.working.mkv");
+        let frame = Frame {
+            width: 16,
+            height: 16,
+            data: vec![0; 16 * 16 * 4],
+            age_ns: 0,
+        };
+        let profile = Profile {
+            format: Format::Mkv,
+            video: VideoSettings {
+                height: 16,
+                fps: 30,
+            },
+            audio: AudioSettings::default(),
+            cursor: false,
+        };
+        let options = RecordOptions {
+            profile,
+            rect: Some(rect),
+            audio_only: false,
+            threads: 1,
+            window: false,
+            camera: None,
+            resilient: false,
+            show_no_signal: false,
+            show_card: false,
+            cursor: false,
+            mic_gain: Arc::new(AtomicU32::new(100)),
+            system_gain: Arc::new(AtomicU32::new(100)),
+        };
+        let live = Live {
+            rect,
+            output: output.clone(),
+            scratch: scratch.clone(),
+            animate: false,
+            clock: std::time::Instant::now(),
+            inputs: Vec::new(),
+            video: None,
+            camera: None,
+            writer: VideoWriter::new(
+                &scratch,
+                rect,
+                options.profile.video,
+                Format::Mkv,
+                1,
+                true,
+                false,
+            )
+            .unwrap(),
+            last: Some(frame),
+            recover: None,
+            resilient: false,
+            show_no_signal: false,
+            show_card: false,
+            cursor: false,
+            placeholder: None,
+            next_retry: std::time::Instant::now(),
+            was_usable: true,
+        };
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let result = live.run(options, stop);
+        assert!(
+            result.is_err(),
+            "a cancelled take must be reported as a failed start, not as a recording"
+        );
+        assert!(
+            !output.exists(),
+            "a cancelled take must not publish a video file"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The microphone and the system audio each carry their own gain, and the
+    /// mixer sums the two already-scaled streams.
+    #[test]
+    fn system_and_microphone_volumes_reach_the_mix_separately() {
+        use platform::geom::{apply_gain, mix_from, AudioQueue};
+
+        let mut system = AudioQueue::default();
+        let mut microphone = AudioQueue::default();
+        let mut system_block = vec![0.2f32; 480];
+        let mut microphone_block = vec![0.2f32; 480];
+        apply_gain(&mut system_block, 50);
+        apply_gain(&mut microphone_block, 200);
+        system.push_at(0, &system_block);
+        microphone.push_at(0, &microphone_block);
+
+        let mixed = mix_from(&mut [system, microphone], 0, 480, 480);
+        for sample in &mixed {
+            assert!((sample - 0.5).abs() < 1e-6, "{sample}");
+        }
+
+        // Muting the system audio leaves the microphone's own level untouched.
+        let mut system = AudioQueue::default();
+        let mut microphone = AudioQueue::default();
+        let mut system_block = vec![0.2f32; 480];
+        let mut microphone_block = vec![0.2f32; 480];
+        apply_gain(&mut system_block, 0);
+        apply_gain(&mut microphone_block, 200);
+        system.push_at(0, &system_block);
+        microphone.push_at(0, &microphone_block);
+        let mixed = mix_from(&mut [system, microphone], 0, 480, 480);
+        for sample in &mixed {
+            assert!((sample - 0.4).abs() < 1e-6, "{sample}");
+        }
     }
 }

@@ -43,7 +43,11 @@ pub fn install(clock: fn() -> LocalTime) {
 }
 
 pub fn now() -> LocalTime {
-    clock().get().copied().map(|read| read()).unwrap_or_default()
+    clock()
+        .get()
+        .copied()
+        .map(|read| read())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

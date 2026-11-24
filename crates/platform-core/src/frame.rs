@@ -14,6 +14,7 @@ pub fn blank(width: u32, height: u32) -> Frame {
         width,
         height,
         data: vec![0; width as usize * height as usize * 4],
+        age_ns: 0,
     }
 }
 
@@ -44,6 +45,7 @@ pub fn fit(frame: Frame, width: u32, height: u32) -> Frame {
         width,
         height,
         data,
+        age_ns: frame.age_ns,
     }
 }
 
@@ -57,6 +59,7 @@ mod tests {
             width: 51,
             height: 40,
             data: [9u8, 8, 7, 255].repeat(51 * 40),
+            age_ns: 0,
         };
         let fitted = fit(frame, 50, 40);
         assert_eq!((fitted.width, fitted.height), (50, 40));

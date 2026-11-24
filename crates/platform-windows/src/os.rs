@@ -141,6 +141,7 @@ fn grab_screen(rect: Rect, draw_cursor: bool) -> Result<Frame, String> {
             width: rect.w,
             height: rect.h,
             data,
+            age_ns: 0,
         })
     }
 }
@@ -479,33 +480,35 @@ fn pwstr(value: windows::core::PWSTR) -> String {
     }
 }
 
-fn endpoint_name(device: &windows::Win32::Media::Audio::IMMDevice) -> String {
+fn endpoint_name(device: &windows::Win32::Media::Audio::IMMDevice, fallback: &str) -> String {
     // SAFETY: The device is alive. The allocated friendly name is freed with CoTaskMemFree before return.
     unsafe {
         use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
         use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
         let Ok(store) = device.OpenPropertyStore(windows::Win32::System::Com::STGM_READ) else {
-            return "Microphone".into();
+            return fallback.into();
         };
         let Ok(value) = store.GetValue(&PKEY_Device_FriendlyName) else {
-            return "Microphone".into();
+            return fallback.into();
         };
         let Ok(text) = PropVariantToStringAlloc(&value) else {
-            return "Microphone".into();
+            return fallback.into();
         };
         pwstr(text)
     }
 }
 
-pub fn microphones() -> Vec<AudioDevice> {
+/// The active endpoints of one data flow, with the WASAPI id the capture API
+/// takes and the friendly name Settings shows.
+fn endpoints(
+    flow: windows::Win32::Media::Audio::EDataFlow,
+    fallback: &str,
+) -> Vec<AudioDevice> {
     (|| {
         let enumerator = device_enumerator().ok()?;
         // SAFETY: The enumerator is alive. The returned collection is released when dropped.
         let collection = unsafe {
-            enumerator.EnumAudioEndpoints(
-                windows::Win32::Media::Audio::eCapture,
-                windows::Win32::Media::Audio::DEVICE_STATE_ACTIVE,
-            )
+            enumerator.EnumAudioEndpoints(flow, windows::Win32::Media::Audio::DEVICE_STATE_ACTIVE)
         }
         .ok()?;
         // SAFETY: The endpoint collection is alive for this call.
@@ -522,12 +525,22 @@ pub fn microphones() -> Vec<AudioDevice> {
             };
             result.push(AudioDevice {
                 id: pwstr(id),
-                name: endpoint_name(&device),
+                name: endpoint_name(&device, fallback),
             });
         }
         Some(result)
     })()
     .unwrap_or_default()
+}
+
+pub fn microphones() -> Vec<AudioDevice> {
+    endpoints(windows::Win32::Media::Audio::eCapture, "Microphone")
+}
+
+/// The playback endpoints system audio can be recorded from: the WASAPI render
+/// endpoints, in the order Windows reports them.
+pub fn system_outputs() -> Vec<AudioDevice> {
+    endpoints(windows::Win32::Media::Audio::eRender, "System audio")
 }
 
 pub fn device_name(id: &str) -> Option<String> {

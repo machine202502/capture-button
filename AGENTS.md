@@ -38,6 +38,24 @@ The application depends on one platform crate, `platform`. Under it:
   Wayland, a tray on plain GNOME, global hotkeys) must report "unsupported"
   instead of faking a result, and the app must degrade gracefully.
 
+### Platform code never leaks into `platform-core`
+
+`platform-core` stays OS-neutral. Forbidden there:
+
+- `cfg(target_os = …)`, `cfg(windows)`, `cfg(unix)` and any other platform gate;
+- OS vocabulary: X11/Xlib/XGrabKey/keysym/EWMH, Win32/HWND/HICON/WASAPI;
+- conversions into a platform representation, such as computing an X11 keysym
+  from a key.
+
+Keep the shared vocabulary and policy in `platform-core` (for example `Key`)
+and let the backend convert it to its own representation (for example
+`platform-linux` mapping a `Key` to a keysym before `XGrabKey`). A platform
+type in the core signature is the same leak even when the body is trivial.
+
+Lead agents must state this rule in every task brief and check the returned
+diff for violations before accepting it; a delegated agent working as a lead
+for others passes the rule down the same way.
+
 Rule of thumb: what the user sees or does is decided in `platform-core`; what
 talks to the OS is `platform-<os>`; anything that needs both is glue in
 `platform`.

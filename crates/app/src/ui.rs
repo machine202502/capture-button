@@ -8,6 +8,7 @@
 use crate::{media, AudioSettings, CaptureSettings, ProfileRef, Settings};
 use media::{Format, VideoSettings};
 use platform::i18n::{tr, trf};
+use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding, HotkeyChoice};
 use platform::UpdateState;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -115,9 +116,19 @@ pub const ID_TRAY_VIDEO_GAIN_VALUE: i32 = 207;
 pub const ID_LANGUAGE_HEADING: i32 = 222;
 pub const ID_LANGUAGE: i32 = 223;
 pub const ID_SOUND_VOLUME: i32 = 226;
+pub const ID_IDLE_LEVEL: i32 = 246;
 pub const ID_SCREENSHOT_SOUND: i32 = 227;
 pub const ID_TRAY_AUDIO_GAIN_VALUE: i32 = 208;
 pub const MIC_GAIN_MAX: u32 = 300;
+pub const ID_SYSTEM_DEVICE: i32 = 229;
+pub const ID_TRAY_AREA_SYSTEM_DEVICE: i32 = 232;
+pub const ID_TRAY_VIDEO_SYSTEM_DEVICE: i32 = 233;
+pub const ID_TRAY_AUDIO_SYSTEM_DEVICE: i32 = 234;
+pub const ID_SYSTEM_GAIN: i32 = 235;
+pub const ID_TRAY_AREA_SYSTEM_GAIN: i32 = 236;
+pub const ID_TRAY_VIDEO_SYSTEM_GAIN: i32 = 237;
+pub const ID_TRAY_AUDIO_SYSTEM_GAIN: i32 = 238;
+pub const ID_TRAY_VIDEO_MONITOR: i32 = 242;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HistoryClick {
@@ -134,7 +145,12 @@ pub fn history_id(id: i32) -> bool {
 pub fn is_checkbox(id: i32) -> bool {
     matches!(
         id,
-        ID_SYSTEM_AUDIO | ID_MIC | ID_TRAY_AUDIO_SYSTEM | ID_TRAY_AUDIO_MIC | ID_AUTOSTART
+        ID_SYSTEM_AUDIO
+            | ID_MIC
+            | ID_TRAY_AUDIO_SYSTEM
+            | ID_TRAY_AUDIO_MIC
+            | ID_IDLE_LEVEL
+            | ID_AUTOSTART
             ..=ID_CARD
                 | ID_CURSOR
                 | ID_TRAY_AREA_CURSOR
@@ -154,6 +170,10 @@ pub fn is_trackbar(id: i32) -> bool {
             | ID_TRAY_AREA_GAIN
             | ID_TRAY_VIDEO_GAIN
             | ID_TRAY_AUDIO_GAIN
+            | ID_SYSTEM_GAIN
+            | ID_TRAY_AREA_SYSTEM_GAIN
+            | ID_TRAY_VIDEO_SYSTEM_GAIN
+            | ID_TRAY_AUDIO_SYSTEM_GAIN
             | 164
             | 174
     )
@@ -185,6 +205,17 @@ pub fn microphone_control(source: ProfileRef) -> i32 {
     }
 }
 
+/// The profile whose microphone dropdown `id` is.
+pub fn profile_for_microphone_device(id: i32) -> Option<ProfileRef> {
+    match id {
+        ID_MIC_DEVICE => Some(ProfileRef::Capture),
+        ID_TRAY_AREA_DEVICE => Some(ProfileRef::Area),
+        ID_TRAY_VIDEO_DEVICE => Some(ProfileRef::Video),
+        ID_TRAY_AUDIO_DEVICE => Some(ProfileRef::Audio),
+        _ => None,
+    }
+}
+
 pub fn profile_for_microphone(id: i32) -> Option<ProfileRef> {
     match id {
         ID_MIC_GAIN => Some(ProfileRef::Capture),
@@ -192,6 +223,44 @@ pub fn profile_for_microphone(id: i32) -> Option<ProfileRef> {
         ID_TRAY_VIDEO_GAIN => Some(ProfileRef::Video),
         ID_TRAY_AUDIO_GAIN => Some(ProfileRef::Audio),
         _ => None,
+    }
+}
+
+pub fn system_gain_control(source: ProfileRef) -> i32 {
+    match source {
+        ProfileRef::Capture => ID_SYSTEM_GAIN,
+        ProfileRef::Area => ID_TRAY_AREA_SYSTEM_GAIN,
+        ProfileRef::Video => ID_TRAY_VIDEO_SYSTEM_GAIN,
+        ProfileRef::Audio => ID_TRAY_AUDIO_SYSTEM_GAIN,
+    }
+}
+
+pub fn profile_for_system_gain(id: i32) -> Option<ProfileRef> {
+    match id {
+        ID_SYSTEM_GAIN => Some(ProfileRef::Capture),
+        ID_TRAY_AREA_SYSTEM_GAIN => Some(ProfileRef::Area),
+        ID_TRAY_VIDEO_SYSTEM_GAIN => Some(ProfileRef::Video),
+        ID_TRAY_AUDIO_SYSTEM_GAIN => Some(ProfileRef::Audio),
+        _ => None,
+    }
+}
+
+fn system_device_slot(id: i32) -> Option<usize> {
+    match id {
+        ID_SYSTEM_DEVICE => Some(0),
+        ID_TRAY_AREA_SYSTEM_DEVICE => Some(1),
+        ID_TRAY_VIDEO_SYSTEM_DEVICE => Some(2),
+        ID_TRAY_AUDIO_SYSTEM_DEVICE => Some(3),
+        _ => None,
+    }
+}
+
+pub fn profile_for_system_device(id: i32) -> Option<ProfileRef> {
+    match system_device_slot(id)? {
+        0 => Some(ProfileRef::Capture),
+        1 => Some(ProfileRef::Area),
+        2 => Some(ProfileRef::Video),
+        _ => Some(ProfileRef::Audio),
     }
 }
 
@@ -245,8 +314,19 @@ pub fn folder_control(id: i32) -> Option<(media::OutputCategory, bool)> {
 
 #[derive(Debug)]
 pub enum UiRequest {
-    Command { id: i32, notification: u16 },
-    Slider { id: i32, value: u32, persist: bool },
+    Command {
+        id: i32,
+        notification: u16,
+    },
+    Slider {
+        id: i32,
+        value: u32,
+        persist: bool,
+    },
+    /// A hotkey row changed in the window; the application persists it.
+    HotkeysChanged,
+    /// The user asked the desktop for a new combination of `action`.
+    HotkeyChange(HotkeyAction),
     CloseRequested,
 }
 
@@ -272,10 +352,7 @@ fn install_paint_guard() {
         if let Some(ui) = weak.upgrade() {
             if let platform::shell::PaintEvent::Size(width, height) = event {
                 let current = ui.window().size();
-                if width > 0
-                    && height > 0
-                    && (current.width != width || current.height != height)
-                {
+                if width > 0 && height > 0 && (current.width != width || current.height != height) {
                     ui.window()
                         .set_size(slint::PhysicalSize::new(width, height));
                 }
@@ -512,27 +589,37 @@ fn sync_labels(ui: &MainWindow) {
     labels.set_capture_audio(tr("Capture audio").into());
     labels.set_screenshot_screen(tr("Screenshot screen").into());
     labels.set_screenshot_area(tr("Screenshot area").into());
+    labels.set_select_area(tr("Select area").into());
     labels.set_recent(tr("Recent").into());
     labels.set_no_captures(tr("No captures yet. The last twelve files will appear here.").into());
     labels.set_folder(tr("Folder").into());
     labels.set_open(tr("Open").into());
     labels.set_preferences(tr("Preferences").into());
+    labels.set_hotkeys(tr("Hotkeys").into());
+    labels.set_stop_recording(tr("Stop recording").into());
+    labels.set_not_set(tr("Not set").into());
+    labels.set_press_keys(tr("Press keys…").into());
+    labels.set_set_hotkey(tr("Set").into());
+    labels.set_set_in_system_dialog(tr("Set in system dialog").into());
     labels.set_start_with_windows(tr("Start with Windows").into());
     labels.set_start_minimized(tr("Start minimized with Windows").into());
     labels.set_hide_active(tr("Hide the window while capturing").into());
     labels.set_close_tray(tr("Close button hides to the tray").into());
     labels.set_clipboard(tr("Copy the saved file to the clipboard").into());
-    labels.set_tray_capture(tr("Tray left-click starts area selection").into());
+    labels.set_tray_capture(tr("Clicking the tray icon starts area selection").into());
+    labels.set_tray_capture_hint(platform::shell::tray_click_hint().into());
     labels.set_highlight(tr("Show a red frame around the area").into());
     labels.set_completion_sound(tr("Completion sound").into());
     labels.set_sounds(tr("Sounds").into());
     labels.set_volume(tr("Volume").into());
     labels.set_play_on_save(tr("Play when a recording is saved").into());
     labels.set_play_on_shot(tr("Play for screenshots and photos").into());
+    labels.set_show_level_idle(tr("Show level in Settings").into());
     labels.set_no_signal(tr("Keep recording when the signal is lost").into());
     labels.set_show_card(tr("Show color bars instead of the frame").into());
     labels.set_tray_area(tr("Tray area").into());
     labels.set_tray_video(tr("Tray video").into());
+    labels.set_monitor(tr("Monitor").into());
     labels.set_tray_audio(tr("Tray audio").into());
     labels.set_performance_overlay(tr("Performance and overlay").into());
     labels.set_overlay_renderer(tr("Overlay renderer").into());
@@ -601,6 +688,45 @@ fn bind(ui: &MainWindow, controls: &Controls) {
         });
     });
 
+    let weak = ui.as_weak();
+    let mut hotkeys = controls.clone();
+    ui.on_hotkey_key(move |action, text, ctrl, alt, shift, meta| {
+        let Some(action) = HotkeyAction::from_index(action.max(0) as usize) else {
+            return;
+        };
+        let Some(hotkey) =
+            platform::shell::hotkey_from_press(text.as_str(), ctrl, alt, shift, meta)
+        else {
+            return;
+        };
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        ui.set_hotkey_capture(-1);
+        hotkeys.set_hotkey(action, &hotkey.label());
+        post_request(UiRequest::HotkeysChanged);
+    });
+
+    let weak = ui.as_weak();
+    let mut hotkeys = controls.clone();
+    ui.on_hotkey_clear(move |action| {
+        let Some(action) = HotkeyAction::from_index(action.max(0) as usize) else {
+            return;
+        };
+        hotkeys.set_hotkey(action, "");
+        if let Some(ui) = weak.upgrade() {
+            ui.set_hotkey_capture(-1);
+        }
+        post_request(UiRequest::HotkeysChanged);
+    });
+
+    ui.on_hotkey_change(move |action| {
+        let Some(action) = HotkeyAction::from_index(action.max(0) as usize) else {
+            return;
+        };
+        post_request(UiRequest::HotkeyChange(action));
+    });
+
     let history = controls.clone();
     ui.on_history_click(move |id| {
         post_request(UiRequest::Command {
@@ -661,10 +787,22 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_video_cursor(model.checked(ID_TRAY_VIDEO_CURSOR));
     ui.set_audio_system(model.checked(ID_TRAY_AUDIO_SYSTEM));
     ui.set_audio_mic(model.checked(ID_TRAY_AUDIO_MIC));
+    ui.set_mic_level(model.levels[0][0]);
+    ui.set_system_level(model.levels[0][1]);
+    ui.set_area_mic_level(model.levels[1][0]);
+    ui.set_area_system_level(model.levels[1][1]);
+    ui.set_video_mic_level(model.levels[2][0]);
+    ui.set_video_system_level(model.levels[2][1]);
+    ui.set_audio_mic_level(model.levels[3][0]);
+    ui.set_audio_system_level(model.levels[3][1]);
     ui.set_gain(model.gains[0] as i32);
     ui.set_area_gain(model.gains[1] as i32);
     ui.set_video_gain(model.gains[2] as i32);
     ui.set_audio_gain(model.gains[3] as i32);
+    ui.set_system_gain(model.system_gains[0] as i32);
+    ui.set_area_system_gain(model.system_gains[1] as i32);
+    ui.set_video_system_gain(model.system_gains[2] as i32);
+    ui.set_audio_system_gain(model.system_gains[3] as i32);
     ui.set_autostart(model.checked(ID_AUTOSTART));
     ui.set_start_minimized(model.checked(ID_START_MINIMIZED));
     ui.set_hide_active(model.checked(ID_HIDE_ACTIVE));
@@ -672,7 +810,9 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_clipboard(model.checked(ID_CLIPBOARD));
     ui.set_tray_capture(model.checked(ID_TRAY_CAPTURE));
     ui.set_highlight(model.checked(ID_HIGHLIGHT));
+    ui.set_outline_supported(platform::outline::supported());
     ui.set_sound(model.checked(ID_NOTIFY));
+    ui.set_show_idle_level(model.checked(ID_IDLE_LEVEL));
     ui.set_sound_volume(model.sound_volume as i32);
     ui.set_shot_sound(model.checked(ID_SCREENSHOT_SOUND));
     ui.set_no_signal(model.checked(ID_NO_SIGNAL));
@@ -681,6 +821,18 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_area_device(model.device_index[1] as i32);
     ui.set_video_device(model.device_index[2] as i32);
     ui.set_audio_device(model.device_index[3] as i32);
+    ui.set_system_device(model.system_device_index[0] as i32);
+    ui.set_area_system_device(model.system_device_index[1] as i32);
+    ui.set_video_system_device(model.system_device_index[2] as i32);
+    ui.set_audio_system_device(model.system_device_index[3] as i32);
+    ui.set_hotkey_rows(slint::ModelRc::new(slint::VecModel::from(hotkey_rows(
+        model,
+    ))));
+    ui.set_hotkeys_supported(model.hotkeys_supported);
+    ui.set_hotkeys_dialog(model.hotkeys_choice == HotkeyChoice::SystemDialog);
+    ui.set_hotkeys_pending(model.hotkeys_pending);
+    ui.set_monitors_supported(model.monitors_supported);
+    ui.set_video_monitor(model.monitor_index as i32);
     ui.set_status(model.status.clone().into());
     ui.set_status_saved(model.status_saved);
     ui.set_stop_label(model.stop_label.clone().into());
@@ -699,7 +851,7 @@ fn sync(ui: &MainWindow, model: &Model) {
             false,
             true,
         ),
-        UpdateState::Installing => (tr("Installing…"), false, true),
+        UpdateState::Installing => (tr("InstallingвЂ¦"), false, true),
         UpdateState::UpToDate | UpdateState::Error | UpdateState::Unsupported => {
             (tr("Update"), false, false)
         }
@@ -756,11 +908,12 @@ fn sync(ui: &MainWindow, model: &Model) {
     );
     ui.set_language_names(slint::ModelRc::new(slint::VecModel::from(names)));
 
-    let renderers = platform::region::overlay_renderers()
-        .into_iter()
-        .map(|renderer| slint::SharedString::from(renderer.name()))
+    let names = platform::region::overlay_renderers()
+        .available
+        .iter()
+        .map(|renderer| slint::SharedString::from(renderer.name))
         .collect::<Vec<_>>();
-    ui.set_region_renderer_names(slint::ModelRc::new(slint::VecModel::from(renderers)));
+    ui.set_region_renderer_names(slint::ModelRc::new(slint::VecModel::from(names)));
 
     ui.set_capture_devices(slint::ModelRc::new(slint::VecModel::from(device_names(
         &model.devices[0],
@@ -773,6 +926,12 @@ fn sync(ui: &MainWindow, model: &Model) {
     ))));
     ui.set_audio_devices(slint::ModelRc::new(slint::VecModel::from(device_names(
         &model.devices[3],
+    ))));
+    ui.set_system_devices(slint::ModelRc::new(slint::VecModel::from(
+        system_device_names(&model.system_devices),
+    )));
+    ui.set_monitor_names(slint::ModelRc::new(slint::VecModel::from(monitor_names(
+        &model.monitors,
     ))));
     ui.set_history(slint::ModelRc::new(slint::VecModel::from(
         model
@@ -795,6 +954,58 @@ fn device_names(devices: &[media::AudioDevice]) -> Vec<slint::SharedString> {
     names
 }
 
+fn system_device_names(devices: &[platform::audio::AudioSource]) -> Vec<slint::SharedString> {
+    let mut names = vec![slint::SharedString::from(tr("Auto (current output)"))];
+    names.extend(
+        devices
+            .iter()
+            .map(|device| slint::SharedString::from(device.name.clone())),
+    );
+    names
+}
+fn monitor_index(monitors: &[platform::screen::MonitorInfo], id: &str) -> usize {
+    if id.trim().is_empty() || id.eq_ignore_ascii_case("auto") {
+        0
+    } else {
+        monitors
+            .iter()
+            .position(|monitor| monitor.id == id)
+            .map(|index| index + 1)
+            .unwrap_or(0)
+    }
+}
+
+fn monitor_names(monitors: &[platform::screen::MonitorInfo]) -> Vec<slint::SharedString> {
+    let mut names = vec![slint::SharedString::from(tr("Auto (primary)"))];
+    names.extend(monitors.iter().map(|monitor| {
+        slint::SharedString::from(format!(
+            "{} ({}x{})",
+            monitor.name, monitor.width, monitor.height
+        ))
+    }));
+    names
+}
+
+/// The Settings rows of the hotkey table: one per action, in table order.
+fn hotkey_rows(model: &Model) -> Vec<HotkeyRow> {
+    hotkey_defs()
+        .iter()
+        .map(|def| {
+            let value = model
+                .hotkeys
+                .iter()
+                .find(|binding| binding.action == def.action)
+                .map(|binding| binding.combination.as_str())
+                .unwrap_or_default();
+            HotkeyRow {
+                action: def.action.index() as i32,
+                label: tr(def.label_key).into(),
+                value: value.into(),
+            }
+        })
+        .collect()
+}
+
 #[derive(Default)]
 struct Model {
     page: usize,
@@ -814,10 +1025,20 @@ struct Model {
     language: usize,
     sound_volume: u32,
     gains: [u32; 4],
+    system_gains: [u32; 4],
     folders: [String; 5],
     folder_custom: [bool; 5],
     devices: [Vec<media::AudioDevice>; 4],
     device_index: [usize; 4],
+    system_devices: Vec<platform::audio::AudioSource>,
+    system_device_index: [usize; 4],
+    monitors: Vec<platform::screen::MonitorInfo>,
+    monitors_supported: bool,
+    hotkeys_supported: bool,
+    hotkeys_choice: HotkeyChoice,
+    hotkeys: Vec<HotkeyBinding>,
+    hotkeys_pending: bool,
+    monitor_index: usize,
     history: Vec<String>,
     history_ack: Option<i32>,
     status: String,
@@ -826,6 +1047,8 @@ struct Model {
     idle: bool,
     recording: bool,
     saving: bool,
+    /// Live level per profile: `[microphone, system]` in `ProfileRef::ALL` order.
+    levels: [[f32; 2]; 4],
     about_open: bool,
     update_state: UpdateState,
     source_open: bool,
@@ -933,6 +1156,44 @@ impl Controls {
         self.update(|model| model.saving = saving);
     }
 
+    /// Moves the live level inside the microphone and system-audio sliders.
+    ///
+    /// `microphone` and `system` are `0..=1` bar positions from the recording
+    /// timer. Only the two properties are pushed: a full `sync` here would
+    /// rebuild the hotkey rows twenty times a second.
+    pub fn set_levels(&self, levels: &[[f32; 2]; 4]) {
+        let levels = std::array::from_fn(|profile| {
+            [
+                levels[profile][0].clamp(0.0, 1.0),
+                levels[profile][1].clamp(0.0, 1.0),
+            ]
+        });
+        {
+            let mut model = self.model.lock().unwrap_or_else(|e| e.into_inner());
+            model.levels = levels;
+        }
+        if !visible() {
+            return;
+        }
+        let weak = UI_WEAK.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let Some(weak) = weak else {
+            return;
+        };
+        slint::invoke_from_event_loop(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_mic_level(levels[0][0]);
+                ui.set_system_level(levels[0][1]);
+                ui.set_area_mic_level(levels[1][0]);
+                ui.set_area_system_level(levels[1][1]);
+                ui.set_video_mic_level(levels[2][0]);
+                ui.set_video_system_level(levels[2][1]);
+                ui.set_audio_mic_level(levels[3][0]);
+                ui.set_audio_system_level(levels[3][1]);
+            }
+        })
+        .ok();
+    }
+
     pub fn set_text(&self, id: i32, text: &str) {
         self.update(|model| match id {
             ID_STOP => model.stop_label = text.to_string(),
@@ -1001,6 +1262,11 @@ impl Controls {
             ID_TRAY_AREA_DEVICE => model.device_index[1] = index,
             ID_TRAY_VIDEO_DEVICE => model.device_index[2] = index,
             ID_TRAY_AUDIO_DEVICE => model.device_index[3] = index,
+            ID_SYSTEM_DEVICE => model.system_device_index[0] = index,
+            ID_TRAY_AREA_SYSTEM_DEVICE => model.system_device_index[1] = index,
+            ID_TRAY_VIDEO_SYSTEM_DEVICE => model.system_device_index[2] = index,
+            ID_TRAY_AUDIO_SYSTEM_DEVICE => model.system_device_index[3] = index,
+            ID_TRAY_VIDEO_MONITOR => model.monitor_index = index,
             _ => {}
         });
     }
@@ -1021,6 +1287,11 @@ impl Controls {
             ID_TRAY_AREA_DEVICE => model.device_index[1],
             ID_TRAY_VIDEO_DEVICE => model.device_index[2],
             ID_TRAY_AUDIO_DEVICE => model.device_index[3],
+            ID_SYSTEM_DEVICE => model.system_device_index[0],
+            ID_TRAY_AREA_SYSTEM_DEVICE => model.system_device_index[1],
+            ID_TRAY_VIDEO_SYSTEM_DEVICE => model.system_device_index[2],
+            ID_TRAY_AUDIO_SYSTEM_DEVICE => model.system_device_index[3],
+            ID_TRAY_VIDEO_MONITOR => model.monitor_index,
             _ => 0,
         }
     }
@@ -1039,8 +1310,9 @@ impl Controls {
                 .iter()
                 .position(|item| tr(item) == label),
             ID_REGION_RENDERER => platform::region::overlay_renderers()
+                .available
                 .iter()
-                .position(|renderer| renderer.name() == label),
+                .position(|renderer| renderer.name == label),
             ID_LANGUAGE => {
                 let names = platform::i18n::available();
                 if label == tr("System") {
@@ -1064,6 +1336,37 @@ impl Controls {
                         .map(|index| index + 1)
                 }
             }
+            ID_TRAY_VIDEO_MONITOR => {
+                let model = self.model.lock().unwrap_or_else(|e| e.into_inner());
+                if label == tr("Auto (primary)") {
+                    Some(0)
+                } else {
+                    model
+                        .monitors
+                        .iter()
+                        .position(|monitor| {
+                            format!("{} ({}x{})", monitor.name, monitor.width, monitor.height)
+                                == label
+                        })
+                        .map(|index| index + 1)
+                }
+            }
+            ID_SYSTEM_DEVICE
+            | ID_TRAY_AREA_SYSTEM_DEVICE
+            | ID_TRAY_VIDEO_SYSTEM_DEVICE
+            | ID_TRAY_AUDIO_SYSTEM_DEVICE => {
+                system_device_slot(id)?;
+                let model = self.model.lock().unwrap_or_else(|e| e.into_inner());
+                if label == tr("Auto (current output)") {
+                    Some(0)
+                } else {
+                    model
+                        .system_devices
+                        .iter()
+                        .position(|source| source.name == label)
+                        .map(|index| index + 1)
+                }
+            }
             _ => None,
         }
     }
@@ -1078,6 +1381,10 @@ impl Controls {
             ID_TRAY_AREA_GAIN => model.gains[1] = value.min(MIC_GAIN_MAX),
             ID_TRAY_VIDEO_GAIN => model.gains[2] = value.min(MIC_GAIN_MAX),
             ID_TRAY_AUDIO_GAIN => model.gains[3] = value.min(MIC_GAIN_MAX),
+            ID_SYSTEM_GAIN => model.system_gains[0] = value.min(MIC_GAIN_MAX),
+            ID_TRAY_AREA_SYSTEM_GAIN => model.system_gains[1] = value.min(MIC_GAIN_MAX),
+            ID_TRAY_VIDEO_SYSTEM_GAIN => model.system_gains[2] = value.min(MIC_GAIN_MAX),
+            ID_TRAY_AUDIO_SYSTEM_GAIN => model.system_gains[3] = value.min(MIC_GAIN_MAX),
             _ => {}
         });
     }
@@ -1097,6 +1404,82 @@ impl Controls {
         }
     }
 
+    pub fn set_system_gain(&mut self, id: i32, gain: u32) {
+        self.set_slider(id, gain);
+    }
+
+    pub fn system_gain(&self, id: i32) -> u32 {
+        let model = self.model.lock().unwrap_or_else(|e| e.into_inner());
+        match id {
+            ID_SYSTEM_GAIN => model.system_gains[0],
+            ID_TRAY_AREA_SYSTEM_GAIN => model.system_gains[1],
+            ID_TRAY_VIDEO_SYSTEM_GAIN => model.system_gains[2],
+            ID_TRAY_AUDIO_SYSTEM_GAIN => model.system_gains[3],
+            _ => 0,
+        }
+    }
+
+    pub fn set_hotkey(&mut self, action: HotkeyAction, value: &str) {
+        self.update(|model| {
+            match model
+                .hotkeys
+                .iter_mut()
+                .find(|binding| binding.action == action)
+            {
+                Some(binding) => binding.combination = value.to_string(),
+                None => model.hotkeys.push(HotkeyBinding {
+                    action,
+                    combination: value.to_string(),
+                }),
+            }
+        });
+    }
+
+    pub fn hotkey(&self, action: HotkeyAction) -> String {
+        self.model
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .hotkeys
+            .iter()
+            .find(|binding| binding.action == action)
+            .map(|binding| binding.combination.clone())
+            .unwrap_or_default()
+    }
+
+    /// Adopts a set the backend reported (a system dialog's answer).
+    pub fn set_hotkeys(&self, bindings: &[HotkeyBinding]) {
+        self.update(|model| {
+            for binding in bindings {
+                match model
+                    .hotkeys
+                    .iter_mut()
+                    .find(|saved| saved.action == binding.action)
+                {
+                    Some(saved) => saved.combination = binding.combination.clone(),
+                    None => model.hotkeys.push(binding.clone()),
+                }
+            }
+        });
+    }
+
+    /// Shows that the desktop is asking for the combinations right now.
+    pub fn set_hotkeys_pending(&self, pending: bool) {
+        self.update(|model| model.hotkeys_pending = pending);
+    }
+
+    pub fn set_hotkeys_supported(&self, supported: bool) {
+        self.update(|model| model.hotkeys_supported = supported);
+    }
+
+    /// Switches the window between capturing a press and showing the desktop's
+    /// dialog, after the backend changed the choice.
+    pub fn set_hotkey_choice(&self, choice: HotkeyChoice) {
+        self.update(|model| {
+            model.hotkeys_choice = choice;
+            model.hotkeys_pending = false;
+        });
+    }
+
     pub fn refresh_formats(&self) {}
 
     pub fn load_ui(&mut self, settings: &Settings) {
@@ -1108,9 +1491,14 @@ impl Controls {
             model.load_tray(settings, true);
             model.load_tray(settings, false);
             let devices = media::microphones();
-            for slot in 0..4 {
-                model.devices[slot] = devices.clone();
-            }
+            model.devices = std::array::from_fn(|_| devices.clone());
+            model.system_devices = platform::audio::system_sources();
+            model.hotkeys_supported = platform::shell::hotkeys_supported();
+            model.hotkeys_choice = platform::shell::hotkey_choice();
+            model.hotkeys = settings.hotkeys.clone();
+            model.monitors_supported = platform::screen::monitors_supported();
+            model.monitors = platform::screen::monitors();
+            model.monitor_index = monitor_index(&model.monitors, &settings.tray_video.monitor);
             model.load_audio(0, &settings.ui.audio);
             model.load_audio(1, &settings.tray_area.audio);
             model.load_audio(2, &settings.tray_video.audio);
@@ -1128,6 +1516,7 @@ impl Controls {
                 (ID_SCREENSHOT_SOUND, settings.screenshot_sound),
                 (ID_NO_SIGNAL, settings.show_no_signal),
                 (ID_CARD, settings.show_card),
+                (ID_IDLE_LEVEL, settings.show_idle_level),
                 (ID_CURSOR, settings.ui.cursor),
                 (ID_TRAY_AREA_CURSOR, settings.tray_area.cursor),
                 (ID_TRAY_VIDEO_CURSOR, settings.tray_video.cursor),
@@ -1140,15 +1529,11 @@ impl Controls {
                 4 => 3,
                 _ => 0,
             };
-            let renderers = platform::region::overlay_renderers();
-            model.renderer_index = renderers
+            let chosen = platform::region::renderer_by_setting(settings.region_renderer);
+            model.renderer_index = platform::region::overlay_renderers()
+                .available
                 .iter()
-                .position(|renderer| renderer.to_setting() == settings.region_renderer)
-                .or_else(|| {
-                    renderers
-                        .iter()
-                        .position(|renderer| *renderer == platform::region::default_overlay_renderer())
-                })
+                .position(|renderer| renderer.id == chosen.id)
                 .unwrap_or(0);
             model.language = language_index(&settings.ui_language);
             model.sound_volume = settings.sound_volume.min(100);
@@ -1176,6 +1561,26 @@ impl Controls {
     }
 
     pub fn refresh_devices(&mut self, id: i32) {
+        if let Some(slot) = system_device_slot(id) {
+            let sources = platform::audio::system_sources();
+            self.update(|model| {
+                let selected_id = model
+                    .system_devices
+                    .get(model.system_device_index[slot].saturating_sub(1))
+                    .map(|source| source.id.clone());
+                model.system_devices = sources;
+                model.system_device_index[slot] = selected_id
+                    .and_then(|id| {
+                        model
+                            .system_devices
+                            .iter()
+                            .position(|source| source.id == id)
+                            .map(|index| index + 1)
+                    })
+                    .unwrap_or(0);
+            });
+            return;
+        }
         let devices = media::microphones();
         self.update(|model| {
             let slot = device_slot(id);
@@ -1194,15 +1599,38 @@ impl Controls {
         });
     }
 
+    pub fn refresh_monitors(&mut self) {
+        if !platform::screen::monitors_supported() {
+            return;
+        }
+        let monitors = platform::screen::monitors();
+        self.update(|model| {
+            let selected_id = model
+                .monitor_index
+                .checked_sub(1)
+                .and_then(|index| model.monitors.get(index))
+                .map(|monitor| monitor.id.clone());
+            model.monitors = monitors;
+            model.monitor_index = selected_id
+                .map(|id| monitor_index(&model.monitors, &id))
+                .unwrap_or(0);
+        });
+    }
+
     pub fn refresh_all_devices(&mut self, settings: &mut Settings) {
         for id in [
             ID_MIC_DEVICE,
             ID_TRAY_AREA_DEVICE,
             ID_TRAY_VIDEO_DEVICE,
             ID_TRAY_AUDIO_DEVICE,
+            ID_SYSTEM_DEVICE,
+            ID_TRAY_AREA_SYSTEM_DEVICE,
+            ID_TRAY_VIDEO_SYSTEM_DEVICE,
+            ID_TRAY_AUDIO_SYSTEM_DEVICE,
         ] {
             self.refresh_devices(id);
         }
+        self.refresh_monitors();
         self.read_ui(settings, true);
     }
 
@@ -1345,12 +1773,22 @@ impl Model {
             audio.microphone,
         );
         self.gains[slot] = audio.gain.min(MIC_GAIN_MAX);
+        self.system_gains[slot] = audio.system_gain.min(MIC_GAIN_MAX);
         self.device_index[slot] = if audio.device == "Auto" {
             0
         } else {
             self.devices[slot]
                 .iter()
                 .position(|device| device.id == audio.device)
+                .map(|index| index + 1)
+                .unwrap_or(0)
+        };
+        self.system_device_index[slot] = if audio.system_device == "auto" {
+            0
+        } else {
+            self.system_devices
+                .iter()
+                .position(|source| source.id == audio.system_device)
                 .map(|index| index + 1)
                 .unwrap_or(0)
         };
@@ -1365,6 +1803,15 @@ impl Model {
                 .get(selected - 1)
                 .map(|device| device.id.clone())
                 .unwrap_or_else(|| previous.device.clone())
+        };
+        let selected_system = self.system_device_index[slot];
+        let system_device = if selected_system == 0 {
+            "auto".to_string()
+        } else {
+            self.system_devices
+                .get(selected_system - 1)
+                .map(|source| source.id.clone())
+                .unwrap_or_else(|| previous.system_device.clone())
         };
         AudioSettings {
             system: self.checked(match slot {
@@ -1381,6 +1828,8 @@ impl Model {
             }),
             device,
             gain: previous.gain,
+            system_device,
+            system_gain: previous.system_gain,
         }
     }
 
@@ -1415,6 +1864,15 @@ impl Model {
         } else {
             ID_TRAY_VIDEO_CURSOR
         });
+        profile.monitor = if area || !platform::screen::monitors_supported() {
+            previous.monitor.clone()
+        } else {
+            self.monitor_index
+                .checked_sub(1)
+                .and_then(|index| self.monitors.get(index))
+                .map(|monitor| monitor.id.clone())
+                .unwrap_or_else(|| "auto".into())
+        };
         profile
     }
 
@@ -1435,6 +1893,7 @@ impl Model {
         settings.hide_active = self.checked(ID_HIDE_ACTIVE);
         settings.show_no_signal = self.checked(ID_NO_SIGNAL);
         settings.show_card = self.checked(ID_CARD);
+        settings.show_idle_level = self.checked(ID_IDLE_LEVEL);
         settings.close_tray = self.checked(ID_CLOSE_TRAY);
         settings.clipboard = self.checked(ID_CLIPBOARD);
         settings.tray_capture = self.checked(ID_TRAY_CAPTURE);
@@ -1448,20 +1907,19 @@ impl Model {
             3 => 4,
             _ => 0,
         };
-        settings.region_renderer = platform::region::overlay_renderers()
+        let renderer = platform::region::overlay_renderers()
+            .available
             .get(self.renderer_index)
             .copied()
-            .unwrap_or_else(platform::region::default_overlay_renderer)
-            .to_setting();
+            .unwrap_or_else(platform::region::default_renderer);
+        settings.region_renderer = u32::from(renderer.id);
         settings.ui_language = language_value(self.language);
+        settings.hotkeys = self.hotkeys.clone();
         if persist {
             settings.save();
         }
     }
 }
-
-
-
 
 fn preset_index(format: Format, video: VideoSettings) -> usize {
     match (format, video.height, video.fps) {
@@ -1588,6 +2046,40 @@ mod tests {
         assert!(!settings.screenshot_sound);
     }
 
+    #[test]
+    fn loading_settings_puts_the_saved_hotkeys_into_the_model() {
+        let mut settings = Settings::default();
+        settings.set_hotkey(HotkeyAction::Area, "Ctrl+Shift+A".into());
+        settings.set_hotkey(HotkeyAction::Stop, "Alt+F9".into());
+        let mut controls = Controls::new();
+        controls.load_ui(&settings);
+        assert_eq!(controls.hotkey(HotkeyAction::Area), "Ctrl+Shift+A");
+        assert_eq!(controls.hotkey(HotkeyAction::Stop), "Alt+F9");
+    }
+
+    #[test]
+    fn the_hotkey_rows_follow_the_platform_table() {
+        let mut settings = Settings::default();
+        settings.set_hotkey(HotkeyAction::Stop, "Alt+F9".into());
+        let mut controls = Controls::new();
+        controls.load_ui(&settings);
+        let model = controls.model.lock().unwrap_or_else(|e| e.into_inner());
+        let rows = hotkey_rows(&model);
+        assert_eq!(rows.len(), hotkey_defs().len());
+        for (index, row) in rows.iter().enumerate() {
+            let def = &hotkey_defs()[index];
+            assert_eq!(row.action, def.action.index() as i32);
+            assert_eq!(row.label.as_str(), tr(def.label_key));
+            assert_eq!(
+                row.value.as_str(),
+                if def.action == HotkeyAction::Stop {
+                    "Alt+F9"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
     #[test]
     fn applying_a_preset_updates_the_picture() {
         let mut controls = Controls::new();

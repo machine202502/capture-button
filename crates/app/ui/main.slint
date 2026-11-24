@@ -18,6 +18,12 @@ global Palette {
     out property <color> disabled: #a9c1c8;
     out property <color> on-accent: #ecfeff;
     out property <color> danger: #d8455f;
+    // The live level inside a volume track. They are deliberately lighter and
+    // warmer than the sea-teal fill they sit on, so the setting and the signal
+    // read as two different things.
+    out property <color> meter-low: #22c55e;
+    out property <color> meter-mid: #f59e0b;
+    out property <color> meter-high: #ef4444;
 }
 
 export global Labels {
@@ -52,17 +58,23 @@ export global Labels {
     in property <string> capture_audio: "";
     in property <string> screenshot_screen: "";
     in property <string> screenshot_area: "";
+    in property <string> select_area: "";
     in property <string> recent: "";
     in property <string> no_captures: "";
     in property <string> folder: "";
     in property <string> open: "";
     in property <string> preferences: "";
+    in property <string> hotkeys: "";
+    in property <string> stop_recording: "";
+    in property <string> not_set: "";
+    in property <string> press_keys: "";
     in property <string> start_with_windows: "";
     in property <string> start_minimized: "";
     in property <string> hide_active: "";
     in property <string> close_tray: "";
     in property <string> clipboard: "";
     in property <string> tray_capture: "";
+    in property <string> tray_capture_hint: "";
     in property <string> highlight: "";
     in property <string> completion_sound: "";
     in property <string> sounds: "";
@@ -71,8 +83,10 @@ export global Labels {
     in property <string> play_on_shot: "";
     in property <string> no_signal: "";
     in property <string> show_card: "";
+    in property <string> show_level_idle: "";
     in property <string> tray_area: "";
     in property <string> tray_video: "";
+    in property <string> monitor: "";
     in property <string> tray_audio: "";
     in property <string> performance_overlay: "";
     in property <string> overlay_renderer: "";
@@ -93,6 +107,8 @@ export global Labels {
     in property <string> default_folder: "";
     in property <string> change: "";
     in property <string> reset: "";
+    in property <string> set_hotkey: "";
+    in property <string> set_in_system_dialog: "";
     in property <string> close: "";
     in property <string> about_version: "";
     in property <string> about_note: "";
@@ -110,6 +126,14 @@ component SectionTitle inherits Text {
     color: Palette.muted;
     letter-spacing: 0.8px;
     vertical-alignment: center;
+}
+
+/// One row of the Settings hotkey table, built from the platform's action
+/// table. `action` is the row's position in that table.
+export struct HotkeyRow {
+    action: int,
+    label: string,
+    value: string,
 }
 
 component OceanButton inherits Rectangle {
@@ -223,6 +247,9 @@ component OceanSlider inherits Rectangle {
     in property <int> maximum: 100;
     in property <int> value: 50;
     in property <bool> enabled: true;
+    // Live level of the source this slider sets, 0..1 from -60 dBFS to 0 dBFS.
+    // Zero is silence, which leaves the track exactly as the setting draws it.
+    in property <float> level: 0;
     callback changed(int);
     callback released;
 
@@ -250,6 +277,18 @@ component OceanSlider inherits Rectangle {
         height: 6px;
         border-radius: 3px;
         background: root.enabled ? Palette.accent : Palette.disabled;
+    }
+    // The live level, drawn inside the same track and over the setting fill.
+    // Its width never leaves the track and it does not move the knob, so one
+    // slider shows both the volume setting and the signal. A thin inset keeps
+    // the teal fill visible as a rim above and below.
+    Rectangle {
+        x: 1px;
+        y: (root.height - 4px) / 2;
+        width: (root.width - 2px) * Math.max(0, Math.min(1, root.level));
+        height: 4px;
+        border-radius: 2px;
+        background: root.level > 0.85 ? Palette.meter-high : (root.level > 0.6 ? Palette.meter-mid : Palette.meter-low);
     }
     Rectangle {
         x: (root.width - 18px) * Math.max(0, Math.min(1, (root.value - root.minimum) / Math.max(1, root.maximum - root.minimum)));
@@ -318,7 +357,11 @@ component MiniLink inherits Rectangle {
 
 export component MainWindow inherits Window {
     title: "Capture Button";
-    icon: @image-url("../../../assets/CaptureButton-64.png");
+    // No `icon:` on purpose. Slint turns the image into one 256 px HICON with a
+    // single 1-bit mask, and every smaller copy Windows draws from it (the Task
+    // Manager process row, the title bar at 100 %) comes out stippled and
+    // pixelated. The window icons come from the executable's multi-size .ico
+    // instead: platform-windows/src/shell.rs installs them in install_paint_guard.
     min-width: 560px;
     min-height: 520px;
     max-width: 3200px;
@@ -358,6 +401,20 @@ export component MainWindow inherits Window {
     in-out property <int> area-gain: 100;
     in-out property <int> video-gain: 100;
     in-out property <int> audio-gain: 100;
+    in-out property <int> system-gain: 100;
+    in-out property <int> area-system-gain: 100;
+    in-out property <int> video-system-gain: 100;
+    in-out property <int> audio-system-gain: 100;
+    // Live levels for the sliders, 0..1, pushed by the recording timer:
+    // microphone and system per profile, in Capture, Area, Video, Audio order.
+    in-out property <float> mic-level: 0;
+    in-out property <float> system-level: 0;
+    in-out property <float> area-mic-level: 0;
+    in-out property <float> area-system-level: 0;
+    in-out property <float> video-mic-level: 0;
+    in-out property <float> video-system-level: 0;
+    in-out property <float> audio-mic-level: 0;
+    in-out property <float> audio-system-level: 0;
     in-out property <bool> autostart: false;
     in-out property <bool> start-minimized: false;
     in-out property <bool> hide-active: false;
@@ -365,8 +422,10 @@ export component MainWindow inherits Window {
     in-out property <bool> clipboard: false;
     in-out property <bool> tray-capture: false;
     in-out property <bool> highlight: true;
+    in property <bool> outline-supported: true;
     in-out property <bool> sound: true;
     in-out property <int> sound-volume: 50;
+    in-out property <bool> show-idle-level: true;
     in-out property <bool> shot-sound: true;
     in-out property <bool> no-signal: true;
     in-out property <bool> show-card: true;
@@ -374,10 +433,27 @@ export component MainWindow inherits Window {
     in-out property <int> area-device: 0;
     in-out property <int> video-device: 0;
     in-out property <int> audio-device: 0;
+    in-out property <int> system-device: 0;
+    in-out property <int> area-system-device: 0;
+    in-out property <int> video-system-device: 0;
+    in-out property <int> audio-system-device: 0;
     in-out property <[string]> capture-devices: [Labels.auto];
     in-out property <[string]> area-devices: [Labels.auto];
     in-out property <[string]> video-devices: [Labels.auto];
     in-out property <[string]> audio-devices: [Labels.auto];
+    in-out property <[string]> system-devices: [Labels.auto];
+    in property <[string]> monitor-names: [Labels.auto];
+    in property <bool> monitors-supported: false;
+    in-out property <int> video-monitor: 0;
+    /// The hotkey rows, one per platform action, in table order.
+    in property <[HotkeyRow]> hotkey-rows: [];
+    /// Which row is capturing a key press; -1 when none is.
+    in-out property <int> hotkey-capture: -1;
+    /// The desktop owns the combinations and asks in its own dialog.
+    in property <bool> hotkeys-dialog: false;
+    /// The system dialog is open right now.
+    in property <bool> hotkeys-pending: false;
+    in property <bool> hotkeys-supported: false;
     in-out property <[string]> language-names: ["System"];
     in property <[string]> region-renderer-names: ["GDI"];
     in-out property <[string]> history: [];
@@ -419,11 +495,38 @@ export component MainWindow inherits Window {
     callback choose(int, string);
     callback slide(int, int, bool);
     callback history-click(int);
+    callback hotkey-key(int, string, bool, bool, bool, bool);
+    callback hotkey-clear(int);
+    callback hotkey-change(int);
     callback window-closed();
 
     property <bool> can-tab: root.idle || root.recording;
     property <bool> can-capture: root.idle;
     property <bool> can-stop: root.recording;
+
+    // The keyboard scope is behind the interface, so it never takes a click
+    // meant for a control. It takes the keyboard when the hotkey field is
+    // clicked and turns the next combination into the stored text.
+    keys := FocusScope {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        init => {
+            self.focus();
+        }
+        key-pressed(event) => {
+            if (root.hotkey-capture < 0) {
+                return EventResult.reject;
+            }
+            if (event.text == "\u{001b}") {
+                root.hotkey-capture = -1;
+                return EventResult.accept;
+            }
+            root.hotkey-key(root.hotkey-capture, event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta);
+            return EventResult.accept;
+        }
+    }
 
     VerticalLayout {
         width: 100%;
@@ -586,11 +689,31 @@ export component MainWindow inherits Window {
                             }
                             Text { text: root.fps + " FPS"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 52px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
+                        Toggle { label: Labels.show_cursor; checked: root.cursor; toggled => { root.toggle(186); } }
                     }
 
                     Card {
                         SectionTitle { text: Labels.audio; }
                         Toggle { label: Labels.system_audio; checked: root.system-audio; toggled => { root.toggle(124); } }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            ComboBox {
+                                horizontal-stretch: 1;
+                                model: root.system-devices;
+                                current-index: root.system-device;
+                                selected(value) => { root.choose(229, value); }
+                            }
+                            OceanSlider {
+                                width: 150px * ui-scale;
+                                minimum: 0;
+                                maximum: 300;
+                                value: root.system-gain;
+                                level: root.system-level;
+                                changed(v) => { root.system-gain = v; root.slide(235, v, false); }
+                                released => { root.slide(235, root.system-gain, true); }
+                            }
+                            Text { text: root.system-gain + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
+                        }
                         Toggle { label: Labels.microphone; checked: root.microphone; toggled => { root.toggle(125); } }
                         HorizontalLayout {
                             spacing: 8px * ui-scale;
@@ -605,12 +728,12 @@ export component MainWindow inherits Window {
                                 minimum: 0;
                                 maximum: 300;
                                 value: root.gain;
+                                level: root.mic-level;
                                 changed(v) => { root.gain = v; root.slide(194, v, false); }
                                 released => { root.slide(194, root.gain, true); }
                             }
                             Text { text: root.gain + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
-                        Toggle { label: Labels.show_cursor; checked: root.cursor; toggled => { root.toggle(186); } }
                     }
 
                     Card {
@@ -812,9 +935,111 @@ export component MainWindow inherits Window {
                         Toggle { label: Labels.close_tray; checked: root.close-tray; toggled => { root.toggle(153); } }
                         Toggle { label: Labels.clipboard; checked: root.clipboard; toggled => { root.toggle(154); } }
                         Toggle { label: Labels.tray_capture; checked: root.tray-capture; toggled => { root.toggle(155); } }
-                        Toggle { label: Labels.highlight; checked: root.highlight; toggled => { root.toggle(156); } }
+                        Text {
+                            text: Labels.tray_capture_hint;
+                            color: Palette.muted;
+                            font-size: 10px * ui-scale;
+                            wrap: word-wrap;
+                            visible: Labels.tray_capture_hint != "";
+                        }
+                        Toggle { label: Labels.highlight; visible: root.outline-supported; checked: root.highlight; toggled => { root.toggle(156); } }
                         Toggle { label: Labels.no_signal; checked: root.no-signal; toggled => { root.toggle(158); } }
                         Toggle { label: Labels.show_card; enabled: root.no-signal; checked: root.show-card; toggled => { root.toggle(159); } }
+                    }
+
+                    Card {
+                        visible: root.hotkeys-supported;
+                        SectionTitle { text: Labels.hotkeys; }
+                            for row in root.hotkey-rows : Rectangle {
+                                width: 100%;
+                                height: 30px * ui-scale;
+                                HorizontalLayout {
+                                    width: 100%;
+                            spacing: 8px * ui-scale;
+                            Text { text: row.label; color: Palette.ink; font-size: 12px * ui-scale; width: 120px * ui-scale; vertical-alignment: center; }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: 30px * ui-scale;
+                                border-radius: 8px * ui-scale;
+                                background: Palette.bg;
+                                border-width: 1px;
+                                border-color: (row-capture-ta.has-hover && !root.hotkeys-dialog) ? Palette.accent : Palette.line;
+                                clip: true;
+                                Text {
+                                    x: 10px * ui-scale;
+                                    y: 0px;
+                                    width: parent.width - 46px * ui-scale;
+                                    height: parent.height;
+                                    text: (!root.hotkeys-dialog && root.hotkey-capture == row.action) ? Labels.press_keys : (row.value == "" ? Labels.not_set : row.value);
+                                    color: ((!root.hotkeys-dialog && root.hotkey-capture == row.action) || row.value == "") ? Palette.muted : Palette.ink;
+                                    font-size: 12px * ui-scale;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                row-capture-ta := TouchArea {
+                                    enabled: !root.hotkeys-dialog && !root.hotkeys-pending;
+                                    clicked => { root.hotkey-capture = row.action; keys.focus(); }
+                                }
+                                Rectangle {
+                                    x: parent.width - 30px * ui-scale;
+                                    y: 3px * ui-scale;
+                                    width: 24px * ui-scale;
+                                    height: 24px * ui-scale;
+                                    border-radius: 7px * ui-scale;
+                                    background: row-clear-ta.enabled && row-clear-ta.has-hover ? Palette.hover : transparent;
+                                    visible: root.hotkeys-dialog || row.value != "";
+                                    Path {
+                                        x: 6px * ui-scale;
+                                        y: 6px * ui-scale;
+                                        width: 12px * ui-scale;
+                                        height: 12px * ui-scale;
+                                        viewbox-width: 12;
+                                        viewbox-height: 12;
+                                        commands: "M 0 0 L 12 12 M 12 0 L 0 12";
+                                        stroke: !row-clear-ta.enabled ? Palette.disabled : (row-clear-ta.has-hover ? Palette.danger : Palette.muted);
+                                        stroke-width: 1.6px * ui-scale;
+                                        stroke-line-cap: round;
+                                        fill: transparent;
+                                    }
+                                    row-clear-ta := TouchArea {
+                                        enabled: row.value != "" && !root.hotkeys-pending;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.hotkey-clear(row.action); }
+                                    }
+                                }
+                            }
+                            if root.hotkeys-dialog : Rectangle {
+                                // The desktop owns the combination: this asks it
+                                // for a new one instead of capturing a press.
+                                width: 66px * ui-scale;
+                                height: 30px * ui-scale;
+                                border-radius: 8px * ui-scale;
+                                background: row-change-ta.has-hover ? Palette.hover : Palette.card;
+                                border-width: 1px;
+                                border-color: Palette.line;
+                                Text {
+                                    text: row.value == "" ? Labels.set_hotkey : Labels.change;
+                                    color: root.hotkeys-pending ? Palette.disabled : Palette.ink;
+                                    font-size: 11px * ui-scale;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                row-change-ta := TouchArea {
+                                    enabled: row.value != "" && !root.hotkeys-pending;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.hotkey-change(row.action); }
+                                }
+                            }
+                        }
+                            }
+                        Text {
+                            text: Labels.set_in_system_dialog;
+                            color: Palette.muted;
+                            font-size: 10px * ui-scale;
+                            wrap: word-wrap;
+                            visible: root.hotkeys-pending;
+                        }
                     }
 
                     Card {
@@ -847,11 +1072,30 @@ export component MainWindow inherits Window {
                             Text { text: root.area-fps + " FPS"; color: Palette.ink; font-size: 11px; width: 52px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
                         Toggle { label: Labels.system_audio; checked: root.area-system; toggled => { root.toggle(166); } }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            ComboBox {
+                                horizontal-stretch: 1;
+                                model: root.system-devices;
+                                current-index: root.area-system-device;
+                                selected(value) => { root.choose(232, value); }
+                            }
+                            OceanSlider {
+                                width: 150px * ui-scale;
+                                minimum: 0;
+                                maximum: 300;
+                                value: root.area-system-gain;
+                                level: root.area-system-level;
+                                changed(v) => { root.area-system-gain = v; root.slide(236, v, false); }
+                                released => { root.slide(236, root.area-system-gain, true); }
+                            }
+                            Text { text: root.area-system-gain + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
+                        }
                         Toggle { label: Labels.microphone; checked: root.area-mic; toggled => { root.toggle(167); } }
                         HorizontalLayout {
                             spacing: 8px * ui-scale;
                             ComboBox { horizontal-stretch: 1; model: root.area-devices; current-index: root.area-device; selected(value) => { root.choose(168, value); } }
-                            OceanSlider { width: 150px * ui-scale; minimum: 0; maximum: 300; value: root.area-gain; changed(v) => { root.area-gain = v; root.slide(195, v, false); } released => { root.slide(195, root.area-gain, true); } }
+                            OceanSlider { width: 150px * ui-scale; minimum: 0; maximum: 300; value: root.area-gain; level: root.area-mic-level; changed(v) => { root.area-gain = v; root.slide(195, v, false); } released => { root.slide(195, root.area-gain, true); } }
                             Text { text: root.area-gain + "%"; color: Palette.ink; font-size: 11px; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
                         Toggle { label: Labels.show_cursor; checked: root.area-cursor; toggled => { root.toggle(187); } }
@@ -880,12 +1124,42 @@ export component MainWindow inherits Window {
                             OceanSlider { horizontal-stretch: 1; minimum: 5; maximum: 60; value: root.video-fps; changed(v) => { root.video-fps = v; root.slide(174, v, false); } released => { root.slide(174, root.video-fps, true); } }
                             Text { text: root.video-fps + " FPS"; color: Palette.ink; font-size: 11px; width: 52px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
+                        HorizontalLayout {
+                            visible: root.monitors-supported;
+                            spacing: 8px * ui-scale;
+                            Text { text: Labels.monitor; color: Palette.muted; font-size: 11px; width: 100px * ui-scale; vertical-alignment: center; }
+                            ComboBox {
+                                horizontal-stretch: 1;
+                                model: root.monitor-names;
+                                current-index: root.video-monitor;
+                                selected(value) => { root.choose(242, value); }
+                            }
+                        }
                         Toggle { label: Labels.system_audio; checked: root.video-system; toggled => { root.toggle(176); } }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            ComboBox {
+                                horizontal-stretch: 1;
+                                model: root.system-devices;
+                                current-index: root.video-system-device;
+                                selected(value) => { root.choose(233, value); }
+                            }
+                            OceanSlider {
+                                width: 150px * ui-scale;
+                                minimum: 0;
+                                maximum: 300;
+                                value: root.video-system-gain;
+                                level: root.video-system-level;
+                                changed(v) => { root.video-system-gain = v; root.slide(237, v, false); }
+                                released => { root.slide(237, root.video-system-gain, true); }
+                            }
+                            Text { text: root.video-system-gain + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
+                        }
                         Toggle { label: Labels.microphone; checked: root.video-mic; toggled => { root.toggle(177); } }
                         HorizontalLayout {
                             spacing: 8px * ui-scale;
                             ComboBox { horizontal-stretch: 1; model: root.video-devices; current-index: root.video-device; selected(value) => { root.choose(178, value); } }
-                            OceanSlider { width: 150px * ui-scale; minimum: 0; maximum: 300; value: root.video-gain; changed(v) => { root.video-gain = v; root.slide(196, v, false); } released => { root.slide(196, root.video-gain, true); } }
+                            OceanSlider { width: 150px * ui-scale; minimum: 0; maximum: 300; value: root.video-gain; level: root.video-mic-level; changed(v) => { root.video-gain = v; root.slide(196, v, false); } released => { root.slide(196, root.video-gain, true); } }
                             Text { text: root.video-gain + "%"; color: Palette.ink; font-size: 11px; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
                         Toggle { label: Labels.show_cursor; checked: root.video-cursor; toggled => { root.toggle(188); } }
@@ -894,11 +1168,30 @@ export component MainWindow inherits Window {
                     Card {
                         SectionTitle { text: Labels.tray_audio; }
                         Toggle { label: Labels.system_audio; checked: root.audio-system; toggled => { root.toggle(190); } }
+                        HorizontalLayout {
+                            spacing: 8px * ui-scale;
+                            ComboBox {
+                                horizontal-stretch: 1;
+                                model: root.system-devices;
+                                current-index: root.audio-system-device;
+                                selected(value) => { root.choose(234, value); }
+                            }
+                            OceanSlider {
+                                width: 170px * ui-scale;
+                                minimum: 0;
+                                maximum: 300;
+                                value: root.audio-system-gain;
+                                level: root.audio-system-level;
+                                changed(v) => { root.audio-system-gain = v; root.slide(238, v, false); }
+                                released => { root.slide(238, root.audio-system-gain, true); }
+                            }
+                            Text { text: root.audio-system-gain + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
+                        }
                         Toggle { label: Labels.microphone; checked: root.audio-mic; toggled => { root.toggle(191); } }
                         HorizontalLayout {
                             spacing: 8px * ui-scale;
                             ComboBox { horizontal-stretch: 1; model: root.audio-devices; current-index: root.audio-device; selected(value) => { root.choose(192, value); } }
-                            OceanSlider { width: 170px * ui-scale; minimum: 0; maximum: 300; value: root.audio-gain; changed(v) => { root.audio-gain = v; root.slide(197, v, false); } released => { root.slide(197, root.audio-gain, true); } }
+                            OceanSlider { width: 170px * ui-scale; minimum: 0; maximum: 300; value: root.audio-gain; level: root.audio-mic-level; changed(v) => { root.audio-gain = v; root.slide(197, v, false); } released => { root.slide(197, root.audio-gain, true); } }
                             Text { text: root.audio-gain + "%"; color: Palette.ink; font-size: 11px; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
                     }
@@ -920,6 +1213,7 @@ export component MainWindow inherits Window {
                             }
                             Text { text: root.sound-volume + "%"; color: Palette.ink; font-size: 11px * ui-scale; font-weight: 600; width: 42px * ui-scale; horizontal-alignment: right; vertical-alignment: center; }
                         }
+                        Toggle { label: Labels.show_level_idle; checked: root.show-idle-level; toggled => { root.toggle(246); } }
                     }
                 }
             }

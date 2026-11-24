@@ -55,7 +55,9 @@ impl Registry {
     fn write(&self, name: &str, value: &str) {
         // The store is shared by the UI and the capture threads, so the file is
         // rewritten from the merged view under a process-wide lock.
-        let _guard = crate::store::LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _guard = crate::store::LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut values = read(&self.path);
         values.insert(name.to_string(), value.to_string());
         let mut text = String::new();
@@ -96,6 +98,52 @@ fn parse(text: &str) -> BTreeMap<String, String> {
     values
 }
 
+/// The portal's one-shot token that restores the previous screen-cast source
+/// without showing the picker. It is stored hex-encoded because the plain
+/// `key = value` format splits on the first `=`.
+pub fn portal_restore_token() -> Option<String> {
+    let registry = Registry::open()?;
+    let encoded = registry.string("portal_restore_token", "");
+    (!encoded.is_empty()).then(|| decode_token(&encoded))
+}
+
+pub fn set_portal_restore_token(token: Option<&str>) {
+    if let Some(registry) = Registry::open() {
+        registry.set_string(
+            "portal_restore_token",
+            token.map(encode_token).unwrap_or_default().as_str(),
+        );
+    }
+}
+
+fn encode_token(token: &str) -> String {
+    let mut encoded = String::with_capacity(token.len() * 2);
+    for byte in token.bytes() {
+        use std::fmt::Write as _;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn decode_token(encoded: &str) -> String {
+    if !encoded.len().is_multiple_of(2) {
+        return String::new();
+    }
+    let bytes: Option<Vec<u8>> = encoded
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).ok()?;
+            u8::from_str_radix(text, 16).ok()
+        })
+        .collect();
+    bytes
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_default()
+}
+
 /// Autostart through the XDG autostart directory.
 pub fn update_autostart(enabled: bool, minimized: bool) {
     let dir = crate::os::config_dir().join("autostart");
@@ -107,10 +155,30 @@ pub fn update_autostart(enabled: bool, minimized: bool) {
     let exe = std::env::current_exe().unwrap_or_default();
     let extra = if minimized { " --minimized" } else { "" };
     let entry = format!(
-        "[Desktop Entry]\nType=Application\nName=Capture Button\nExec=\"{}\"{}nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=Capture Button\nExec=\"{}\"{}\nX-GNOME-Autostart-enabled=true\n",
         exe.display(),
         extra
     );
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(&file, entry);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_restore_token_survives_the_key_value_format() {
+        // Portal tokens may contain '=' and spaces, which the plain
+        // `key = value` parser would otherwise cut at.
+        let token = "abc+/= a==";
+        assert_eq!(decode_token(&encode_token(token)), token);
+    }
+
+    #[test]
+    fn a_garbled_or_empty_token_decodes_to_nothing() {
+        assert_eq!(decode_token(""), "");
+        assert_eq!(decode_token("xyz"), "");
+        assert_eq!(decode_token("zz"), "");
+    }
 }

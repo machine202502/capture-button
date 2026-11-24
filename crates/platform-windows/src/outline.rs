@@ -3,8 +3,8 @@
 //! The frame is excluded from capture and drawn outside the recorded pixels.
 //! It blinks between a bright and a dim red, the same way the original did.
 
-use platform_core::geom::{self, OutlineBox};
 use crate::palette::Palette;
+use platform_core::geom::{self, OutlineBox};
 use platform_core::types::Rect;
 use std::sync::Mutex;
 use windows::core::{w, PCWSTR};
@@ -28,6 +28,11 @@ static PALETTE: std::sync::OnceLock<Palette> = std::sync::OnceLock::new();
 
 fn palette() -> &'static Palette {
     PALETTE.get().unwrap_or_else(|| crate::palette::default())
+}
+
+/// Windows can always draw the recording outline, so the setting is offered.
+pub fn supported() -> bool {
+    true
 }
 
 pub struct RegionOutline {

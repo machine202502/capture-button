@@ -52,6 +52,10 @@ pub struct Frame {
     pub width: u32,
     pub height: u32,
     pub data: Vec<u8>,
+    /// How long before the application received this frame it was captured, in
+    /// nanoseconds. `0` when the platform cannot tell, which the capture loop
+    /// treats as "captured now".
+    pub age_ns: u64,
 }
 
 #[derive(Clone)]

@@ -4,9 +4,13 @@
 //! [`ShellEvent`]s. Everything here is Win32; a future backend reimplements the
 //! same surface with its own event loop.
 
-use platform_core::i18n::wide;
 use crate::palette::{bgra, Palette};
 use crate::region;
+use platform_core::i18n::wide;
+pub use platform_core::tray::{
+    hotkey_defs, hotkey_from_press, parse_hotkey, Hotkey, HotkeyAction, HotkeyBinding,
+    HotkeyChoice, HotkeyEvent, HotkeyKey,
+};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -17,14 +21,17 @@ use windows::Win32::Graphics::Dwm::DwmFlush;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, IBindCtx, CLSCTX_ALL};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::System::Threading::*;
+use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows::Win32::UI::Controls::{
     DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_GRAYED, ODS_SELECTED, ODT_MENU,
 };
 use windows::Win32::UI::HiDpi::*;
-use windows::Win32::System::Threading::GetCurrentThreadId;
-use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
-use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, SetFocus, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL,
+    MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VK_F1, VK_SPACE,
+};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -38,6 +45,8 @@ const WM_UI_WAKE: u32 = WM_APP + 5;
 pub const TIMER_ID: usize = 1;
 pub const TRAY_RETRY_TIMER: usize = 3;
 pub const HISTORY_ACK_TIMER: usize = 2;
+/// Drives the level bars inside the volume sliders while a take records.
+pub const LEVEL_TIMER: usize = 4;
 const TRAY_RETRY_LIMIT: u32 = 30;
 pub const ID_TRAY_AREA: i32 = 200;
 pub const ID_TRAY_SHOT: i32 = 201;
@@ -465,18 +474,135 @@ pub fn set_tray_status(text: &str, badge: TrayBadge) {
 
 pub fn show_tray_menu(x: i32, y: i32) {
     let shell = shell();
-    unsafe {
+    let command = unsafe {
         SetForegroundWindow(shell.hwnd);
+        // `TPM_RETURNCMD` keeps the chosen command out of the popup's own
+        // message dispatch: a command handled while the menu is still up runs
+        // with the menu's foreground, so "Open window" could not take the focus
+        // (the second start, which has no menu, does). The command is queued
+        // instead and runs right after this call returns.
         TrackPopupMenu(
             shell.tray_menu,
-            TPM_RIGHTBUTTON,
+            TPM_RIGHTBUTTON | TPM_RETURNCMD,
             x,
             y,
             0,
             shell.hwnd,
             None,
-        );
+        )
+        .0
+    };
+    if command != 0 {
+        enqueue(ShellEvent::Command {
+            id: command,
+            notification: 0,
+        });
     }
+}
+
+/// The global hotkeys the application registered, by the id Windows reports in
+/// `WM_HOTKEY`. One id per table row, so a new action needs no new constant.
+const HOTKEY_ID_BASE: i32 = 0x6000;
+
+fn hotkey_command_id(action: HotkeyAction) -> i32 {
+    HOTKEY_ID_BASE + action.index() as i32
+}
+
+/// Global hotkeys need a window to report to, which the host window is, so
+/// every Windows session supports them.
+pub fn hotkeys_supported() -> bool {
+    true
+}
+
+/// Windows has no system dialog for application hotkeys: the settings field
+/// captures the combination and the backend grabs it.
+pub fn hotkey_choice() -> HotkeyChoice {
+    HotkeyChoice::Field
+}
+
+/// Applies the table's combinations, removing every action that is unset.
+///
+/// An unparsable combination is an error and leaves the previously registered
+/// hotkeys in place.
+pub fn register_hotkeys(bindings: &[HotkeyBinding]) -> Result<(), String> {
+    let mut wanted = Vec::with_capacity(hotkey_defs().len());
+    for def in hotkey_defs() {
+        let text = bindings
+            .iter()
+            .find(|binding| binding.action == def.action)
+            .map(|binding| binding.combination.as_str())
+            .unwrap_or_default();
+        wanted.push((hotkey_command_id(def.action), parse_side(text)?));
+    }
+    let hwnd = shell().hwnd;
+    for (id, hotkey) in wanted {
+        // SAFETY: The host window is alive and the id is one this process owns.
+        unsafe {
+            let _ = UnregisterHotKey(hwnd, id);
+        }
+        let Some(hotkey) = hotkey else {
+            continue;
+        };
+        // SAFETY: The host window is alive and receives WM_HOTKEY.
+        unsafe { RegisterHotKey(hwnd, id, modifiers(hotkey), virtual_key(hotkey.key)) }.map_err(
+            |error| {
+                platform_core::i18n::trf(
+                    "Hotkey \"{hotkey}\" could not be registered: {error}",
+                    &[("hotkey", &hotkey.label()), ("error", &error.to_string())],
+                )
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// Asks for the combinations again. Windows has no system dialog: the settings
+/// field captures the press, so applying the set is all there is to do.
+pub fn change_hotkeys(_action: HotkeyAction, bindings: &[HotkeyBinding]) -> Result<(), String> {
+    register_hotkeys(bindings)
+}
+
+fn parse_side(text: &str) -> Result<Option<Hotkey>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    parse_hotkey(text).map(Some).ok_or_else(|| {
+        platform_core::i18n::trf(
+            "Hotkey \"{hotkey}\" needs Ctrl, Alt or Meta and a key",
+            &[("hotkey", text)],
+        )
+    })
+}
+
+fn modifiers(hotkey: Hotkey) -> HOT_KEY_MODIFIERS {
+    let mut modifiers = HOT_KEY_MODIFIERS(0);
+    if hotkey.ctrl {
+        modifiers |= MOD_CONTROL;
+    }
+    if hotkey.alt {
+        modifiers |= MOD_ALT;
+    }
+    if hotkey.shift {
+        modifiers |= MOD_SHIFT;
+    }
+    if hotkey.meta {
+        modifiers |= MOD_WIN;
+    }
+    modifiers | MOD_NOREPEAT
+}
+
+fn virtual_key(key: HotkeyKey) -> u32 {
+    match key {
+        HotkeyKey::Char(letter) => letter as u32,
+        HotkeyKey::Function(number) => u32::from(VK_F1.0) + u32::from(number.saturating_sub(1)),
+        HotkeyKey::Space => u32::from(VK_SPACE.0),
+    }
+}
+
+fn hotkey_action(id: i32) -> Option<HotkeyAction> {
+    let index = usize::try_from(id.checked_sub(HOTKEY_ID_BASE)?).ok()?;
+    HotkeyAction::from_index(index)
 }
 
 pub fn remove_tray() {
@@ -686,7 +812,10 @@ pub fn install_paint_guard(cb: Box<dyn Fn(PaintEvent) + Send>) {
     unsafe {
         // SAFETY: EnumWindows only calls the callback with top-level window
         // handles; `found` outlives the enumeration.
-        let _ = EnumWindows(Some(find_slint_window), LPARAM(&mut found as *mut isize as isize));
+        let _ = EnumWindows(
+            Some(find_slint_window),
+            LPARAM(&mut found as *mut isize as isize),
+        );
     }
     if found != 0 {
         let installed = unsafe {
@@ -699,6 +828,7 @@ pub fn install_paint_guard(cb: Box<dyn Fn(PaintEvent) + Send>) {
             installed.as_bool()
         ));
         let hwnd = HWND(found as *mut _);
+        apply_window_icons(hwnd);
         let style = unsafe {
             // SAFETY: The handle is the Slint window found above.
             GetWindowLongPtrW(hwnd, GWL_STYLE)
@@ -739,6 +869,60 @@ pub fn install_paint_guard(cb: Box<dyn Fn(PaintEvent) + Send>) {
         }
     } else {
         platform_core::logging::warn("paint guard: no Slint window");
+    }
+}
+
+/// Gives the window the executable's own icon frames for the sizes Windows asks
+/// a window for.
+///
+/// Slint installs one 256 px HICON built at runtime from a PNG. A runtime icon
+/// handle carries a single 1-bit mask, so every smaller copy Windows draws from
+/// it — Task Manager's process rows, the title bar at 100 % — is stippled and
+/// pixelated. The `.ico` embedded in the executable already has a frame per
+/// size (16, 20, 24, 32, 40, 48, 64, 96, 128, 256), so the window takes those,
+/// and Windows picks the exact frame instead of rescaling one.
+///
+/// The handles stay loaded for the process lifetime: a window keeps the handle
+/// it was given, not a copy.
+fn apply_window_icons(hwnd: HWND) {
+    let instance = unsafe {
+        // SAFETY: GetModuleHandleW(NULL) returns this process's own module handle.
+        GetModuleHandleW(None).unwrap_or_default()
+    };
+    for (icon_type, metric_x, metric_y) in [
+        (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
+        (ICON_BIG, SM_CXICON, SM_CYICON),
+    ] {
+        let (width, height) = unsafe {
+            // SAFETY: Reading a system metric has no preconditions.
+            (GetSystemMetrics(metric_x), GetSystemMetrics(metric_y))
+        };
+        let icon = unsafe {
+            // SAFETY: The instance is this process, id 1 is its icon group, and
+            // the size is the one Windows asks this window for.
+            LoadImageW(
+                instance,
+                module_icon(),
+                IMAGE_ICON,
+                width,
+                height,
+                LR_DEFAULTCOLOR,
+            )
+        };
+        let Ok(icon) = icon else {
+            platform_core::logging::warn(format!("window icon: no icon at {width}px"));
+            continue;
+        };
+        unsafe {
+            // SAFETY: The window belongs to this process and the handle stays
+            // alive for the process lifetime, which outlives the window.
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                WPARAM(icon_type as usize),
+                LPARAM(icon.0 as isize),
+            );
+        }
     }
 }
 
@@ -924,8 +1108,13 @@ fn draw_tray_item(lparam: LPARAM) {
             DeleteDC(memory);
         }
         let mut text = [0u16; 80];
-        let len = GetMenuStringW(shell().tray_menu, item.itemID, Some(&mut text), MF_BYCOMMAND)
-            .max(0) as usize;
+        let len = GetMenuStringW(
+            shell().tray_menu,
+            item.itemID,
+            Some(&mut text),
+            MF_BYCOMMAND,
+        )
+        .max(0) as usize;
         let mut rect = item.rcItem;
         rect.left += 8 + 32 + 8;
         SetBkMode(item.hDC, TRANSPARENT);
@@ -1046,8 +1235,16 @@ fn paint_menu_glyph(pixels: &mut [u8], size: i32, glyph: TrayGlyph) {
                 } else if (left + radius..right - radius).contains(&py) {
                     px >= left && px <= right
                 } else {
-                    let cx = if px < left + radius { left + radius } else { right - radius };
-                    let cy = if py < margin + radius { margin + radius } else { size as f32 - margin - radius };
+                    let cx = if px < left + radius {
+                        left + radius
+                    } else {
+                        right - radius
+                    };
+                    let cy = if py < margin + radius {
+                        margin + radius
+                    } else {
+                        size as f32 - margin - radius
+                    };
                     ((px - cx).powi(2) + (py - cy).powi(2)).sqrt() <= radius
                 };
                 if inside {
@@ -1200,7 +1397,6 @@ fn tray_status_icon(base: HICON, badge: TrayBadge) -> HICON {
     }
 }
 
-
 /// Downscales RGBA through premultiplied alpha, so the transparent corners do
 /// not bleed dark edges into the icon's border.
 fn resize_rgba(source: &image::RgbaImage, size: u32) -> image::RgbaImage {
@@ -1261,18 +1457,11 @@ fn stamp_circle_aa(pixels: &mut image::RgbaImage, cx: f32, cy: f32, radius: f32,
     }
 }
 
-/// True while a window of this process owns the foreground.
-pub fn app_in_foreground() -> bool {
-    unsafe {
-        // SAFETY: The call has no arguments and the process id lands in a local.
-        let foreground = GetForegroundWindow();
-        if foreground.is_invalid() {
-            return false;
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(foreground, Some(&mut pid));
-        pid == GetCurrentProcessId()
-    }
+/// The hint the settings page shows under the tray-click item: what a click on
+/// the icon does on this desktop. The Win32 tray sends a left click to the
+/// window (`WM_TRAY`) and opens the menu on a right click.
+pub fn tray_click_hint() -> String {
+    platform_core::i18n::tr("Left click starts area selection, right click opens the menu.")
 }
 
 #[link(name = "user32")]
@@ -1286,10 +1475,11 @@ extern "system" {
 /// edge. Raising it to the top of the topmost band fixes that without taking
 /// the foreground from the user.
 pub fn raise_overlay_window() {
-    // The overlay covers a whole monitor, so it is the largest window of this
-    // process; looking it up by size also works when the toolkit has not marked
-    // it topmost yet.
-    let Some(hwnd) = largest_window() else {
+    // Only the area overlay may be raised. It is found by its own title and has
+    // to be visible: the large-window guess used to pick the main window while
+    // the freshly shown overlay had not been laid out yet, and left the main
+    // window topmost for the rest of the session.
+    let Some(hwnd) = overlay_window() else {
         return;
     };
     unsafe {
@@ -1322,6 +1512,38 @@ pub fn raise_overlay_window() {
     }
 }
 
+/// Makes `hwnd` the foreground window even when another process owns the
+/// foreground.
+///
+/// Windows refuses `SetForegroundWindow` to a process that does not own the
+/// foreground, which is exactly the situation when a second instance asks the
+/// running one to show itself or the tray reopens a hidden window. Attaching to
+/// the foreground thread's input queue lifts that restriction for the duration
+/// of the call; the overlay uses the same trick.
+fn focus_window(hwnd: HWND) {
+    unsafe {
+        // SAFETY: Both handles belong to live windows in this session; the calls
+        // borrow no memory and the attachment is undone below.
+        let foreground = GetForegroundWindow();
+        let mut attached = None;
+        if !foreground.is_invalid() && foreground != hwnd {
+            let mut pid = 0u32;
+            let foreground_thread = GetWindowThreadProcessId(foreground, Some(&mut pid));
+            let current_thread = GetCurrentThreadId();
+            if foreground_thread != 0 && foreground_thread != current_thread {
+                AttachThreadInput(foreground_thread, current_thread, 1);
+                attached = Some(foreground_thread);
+            }
+        }
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+        if let Some(thread) = attached {
+            AttachThreadInput(thread, GetCurrentThreadId(), 0);
+        }
+    }
+}
+
 /// Restores the main window from the task bar and focuses it.
 pub fn restore_app_window() {
     let Some(hwnd) = own_window(false) else {
@@ -1334,9 +1556,8 @@ pub fn restore_app_window() {
         } else {
             ShowWindow(hwnd, SW_SHOW);
         }
-        SetForegroundWindow(hwnd);
-        SetFocus(hwnd);
     }
+    focus_window(hwnd);
 }
 
 /// Brings the main window in front after the UI thread has shown it.
@@ -1350,18 +1571,18 @@ pub fn activate_app_window() {
     } {
         return;
     }
-    unsafe {
-        // SAFETY: The window belongs to this process.
-        SetForegroundWindow(hwnd);
-        SetFocus(hwnd);
-    }
+    focus_window(hwnd);
 }
 
-/// The largest visible window of this process: the area overlay.
-fn largest_window() -> Option<HWND> {
+/// The visible area overlay of this process.
+///
+/// Both renderers title their window `Capture Button area`, which is the only
+/// reliable way to tell it from the main window: while the overlay is being
+/// shown it is not always the largest window yet, and after it closes the
+/// largest one is the main window.
+fn overlay_window() -> Option<HWND> {
     struct Search {
         pid: u32,
-        area: i64,
         found: HWND,
     }
     unsafe extern "system" fn look(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -1369,26 +1590,19 @@ fn largest_window() -> Option<HWND> {
         let search = &mut *(lparam.0 as *mut Search);
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid != search.pid {
+        if pid != search.pid || !IsWindowVisible(hwnd).as_bool() {
             return TRUE;
         }
-        let mut class = [0u16; 64];
-        let length = GetClassNameW(hwnd, &mut class).max(0) as usize;
-        if String::from_utf16_lossy(&class[..length]) != "Window Class" {
+        let mut title = [0u16; 64];
+        let length = GetWindowTextW(hwnd, &mut title).max(0) as usize;
+        if String::from_utf16_lossy(&title[..length]) != "Capture Button area" {
             return TRUE;
         }
-        let mut rect = RECT::default();
-        GetWindowRect(hwnd, &mut rect).ok();
-        let area = (rect.right - rect.left) as i64 * (rect.bottom - rect.top) as i64;
-        if area > search.area {
-            search.area = area;
-            search.found = hwnd;
-        }
-        TRUE
+        search.found = hwnd;
+        FALSE
     }
     let mut search = Search {
         pid: std::process::id(),
-        area: 0,
         found: HWND::default(),
     };
     // SAFETY: The callback only reads and writes the search struct it is given.
@@ -1398,40 +1612,7 @@ fn largest_window() -> Option<HWND> {
     (!search.found.is_invalid()).then_some(search.found)
 }
 
-/// The last two foreground changes, so the tray item can tell "the window was
-/// in front until the tray click moved the foreground to the task bar".
-struct ForegroundState {
-    /// The main window owns the foreground.
-    current: bool,
-    /// The main window owned it before the latest change.
-    previous: bool,
-    /// The latest foreground window belongs to the shell (task bar or menu).
-    shell: bool,
-    changed: std::time::Instant,
-}
-
-static FOREGROUND_STATE: std::sync::OnceLock<std::sync::Mutex<ForegroundState>> =
-    std::sync::OnceLock::new();
-static FOREGROUND_HOOK: std::sync::atomic::AtomicIsize =
-    std::sync::atomic::AtomicIsize::new(0);
-
-fn foreground_state() -> &'static std::sync::Mutex<ForegroundState> {
-    FOREGROUND_STATE.get_or_init(|| {
-        std::sync::Mutex::new(ForegroundState {
-            current: false,
-            previous: false,
-            shell: false,
-            changed: std::time::Instant::now(),
-        })
-    })
-}
-
-fn is_main_window(hwnd: HWND) -> bool {
-    let Some(main) = own_window(false) else {
-        return false;
-    };
-    main == hwnd
-}
+static FOREGROUND_HOOK: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 unsafe extern "system" fn on_foreground(
     _hook: HWINEVENTHOOK,
@@ -1445,7 +1626,6 @@ unsafe extern "system" fn on_foreground(
     if event != EVENT_SYSTEM_FOREGROUND {
         return;
     }
-    let ours = is_main_window(hwnd);
     let mut class = [0u16; 64];
     let length = GetClassNameW(hwnd, &mut class).max(0) as usize;
     let name = String::from_utf16_lossy(&class[..length]);
@@ -1458,14 +1638,6 @@ unsafe extern "system" fn on_foreground(
             | "Windows.UI.Core.CoreWindow"
             | "#32768"
     );
-    let mut state = foreground_state()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    state.previous = state.current;
-    state.current = ours;
-    state.shell = shell;
-    state.changed = std::time::Instant::now();
-    drop(state);
     // The shell raises its task bar when the tray is clicked; while the area
     // overlay is open it must stay above that task bar.
     if shell {
@@ -1486,14 +1658,16 @@ unsafe extern "system" fn on_foreground(
 }
 
 /// Starts watching the foreground window. Called once, before the message loop,
-/// so the tray item always knows whether the main window was in front.
+/// so the area overlay stays above the task bar the shell raises for a tray
+/// click.
 pub fn watch_foreground() {
     if FOREGROUND_HOOK.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         return;
     }
     unsafe {
-        // SAFETY: The hook callback only reads the window list and updates the
-        // state above; it is installed once for the lifetime of the process.
+        // SAFETY: The hook callback only reads the foreground window's class
+        // and raises our own overlay; it is installed once for the lifetime of
+        // the process.
         let hook = SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,
@@ -1505,49 +1679,6 @@ pub fn watch_foreground() {
         );
         FOREGROUND_HOOK.store(hook.0 as isize, std::sync::atomic::Ordering::Relaxed);
     }
-}
-
-/// The area overlay when it is open: a window clearly larger than the main one.
-fn overlay_window() -> Option<HWND> {
-    let overlay = largest_window()?;
-    let main = own_window(false)?;
-    let mut overlay_rect = RECT::default();
-    let mut main_rect = RECT::default();
-    // SAFETY: Both windows belong to this process.
-    unsafe {
-        GetWindowRect(overlay, &mut overlay_rect).ok();
-        GetWindowRect(main, &mut main_rect).ok();
-    }
-    let overlay_area = (overlay_rect.right - overlay_rect.left) as i64
-        * (overlay_rect.bottom - overlay_rect.top) as i64;
-    let main_area = (main_rect.right - main_rect.left) as i64 * (main_rect.bottom - main_rect.top) as i64;
-    (overlay != main && overlay_area > main_area * 3 / 2).then_some(overlay)
-}
-
-/// True when the main window is visible, restored and owns the foreground.
-pub fn main_window_open() -> bool {
-    let Some(hwnd) = own_window(false) else {
-        return false;
-    };
-    unsafe {
-        // SAFETY: The window belongs to this process.
-        if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
-            return false;
-        }
-        if GetForegroundWindow() == hwnd {
-            return true;
-        }
-    }
-    // Clicking the tray icon hands the foreground to the task bar, so the window
-    // was in front only a moment ago. Treat that as "open": the item then says
-    // "Close window" and hides it instead of raising it.
-    let state = foreground_state()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    !state.current
-        && state.previous
-        && state.shell
-        && state.changed.elapsed() < std::time::Duration::from_millis(1500)
 }
 
 /// Finds a window of this process: the overlay is topmost, the main window is not.
@@ -1695,12 +1826,15 @@ unsafe fn wnd_proc_inner(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARA
                 WM_RBUTTONUP | WM_CONTEXTMENU => {
                     let mut point = POINT::default();
                     GetCursorPos(&mut point).ok();
-                    enqueue(ShellEvent::TrayContext {
-                        x: point.x,
-                        y: point.y,
-                    });
+                    show_tray_menu(point.x, point.y);
                 }
                 _ => {}
+            }
+            LRESULT(0)
+        }
+        WM_HOTKEY => {
+            if let Some(action) = hotkey_action(wparam.0 as i32) {
+                enqueue(ShellEvent::Hotkey(action));
             }
             LRESULT(0)
         }
@@ -1720,6 +1854,7 @@ unsafe fn wnd_proc_inner(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARA
             KillTimer(hwnd, TIMER_ID).ok();
             KillTimer(hwnd, TRAY_RETRY_TIMER).ok();
             KillTimer(hwnd, HISTORY_ACK_TIMER).ok();
+            KillTimer(hwnd, LEVEL_TIMER).ok();
             region::shutdown();
             PostQuitMessage(0);
             LRESULT(0)
@@ -1746,7 +1881,8 @@ mod tests {
             info.bmiHeader.biBitCount = 32;
             info.bmiHeader.biCompression = BI_RGB.0;
             let mut bits = std::ptr::null_mut();
-            let color = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+            let color =
+                CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
             let pixels = std::slice::from_raw_parts_mut(bits.cast::<u8>(), 32 * 32 * 4);
             for (index, pixel) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let (x, y) = ((index % 32) as i32, (index / 32) as i32);
@@ -1781,8 +1917,6 @@ mod tests {
             icon
         }
     }
-
-
 
     #[test]
     fn the_recording_badge_keeps_the_icon_transparent() {
@@ -1824,7 +1958,8 @@ mod tests {
             );
             let centre = ((size / 2) * size + size / 2) * 4;
             assert_eq!(
-                pixels[centre as usize + 3], 255,
+                pixels[centre as usize + 3],
+                255,
                 "the icon itself must stay opaque"
             );
             let unit = size as f32 / 32.0;

@@ -10,9 +10,11 @@
 //! - `platform` composes this crate with the selected `platform-<os>` backend and
 //!   is the only platform crate the application depends on.
 
+pub mod camera;
 pub mod frame;
 pub mod geom;
 pub mod i18n;
+pub mod level;
 pub mod logging;
 pub mod palette;
 pub mod paths;

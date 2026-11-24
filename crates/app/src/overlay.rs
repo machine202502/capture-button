@@ -17,8 +17,8 @@
 use platform::i18n::tr;
 use platform::palette::Palette;
 use platform::region::{
-    caption, handles, icon, role_enabled, Action, Button, FontSeed, Key, Metrics, Model, Outcome,
-    Point, Role, Shape, ShapeKind, Tool,
+    caption, handles, icon, role_enabled, text_handles, Action, Button, Drag, FontSeed, Key,
+    Metrics, Model, Outcome, Point, Role, Shape, ShapeKind, Tool,
 };
 use slint::{ComponentHandle, ModelRc};
 use std::cell::RefCell;
@@ -87,11 +87,6 @@ fn glyph_size(scale: u32) -> i32 {
     (17 * scale as i32 / 100).max(13)
 }
 
-/// The padding around the text box, in screen pixels.
-fn text_pad(scale: u32) -> i32 {
-    (8 * scale as i32 / 100).max(6)
-}
-
 /// The model's screen pixels in the window's logical pixels.
 fn to_window(value: i32, dpi: f32) -> f32 {
     value as f32 / dpi
@@ -121,6 +116,14 @@ pub struct Scene {
     pub badge_text: String,
     pub hint: Option<String>,
     pub editor: Option<OverlayRect>,
+    /// The text box frame the native overlay draws around the padded hit area,
+    /// next to the frame it paints on the edit box itself.
+    pub editor_outer: Option<OverlayRect>,
+    /// The eight resize handles on the edit box (round dots).
+    pub editor_handles: Vec<OverlayPoint>,
+    /// The eight resize handles on the padded frame (square grabs, the spots
+    /// the model hit-tests).
+    pub editor_outer_handles: Vec<OverlayPoint>,
     pub editor_font_size: f32,
 }
 
@@ -143,7 +146,11 @@ impl Metrics for Estimate {
 
 /// Builds what the window draws. Pure: no window, no OS.
 pub fn build_scene(model: &Model, dpi: f32) -> Scene {
-    let dpi = if dpi.is_finite() && dpi > 0.0 { dpi } else { 1.0 };
+    let dpi = if dpi.is_finite() && dpi > 0.0 {
+        dpi
+    } else {
+        1.0
+    };
     let width = model.frame.width as i32;
     let height = model.frame.height as i32;
     let selection = model.selected();
@@ -254,6 +261,40 @@ pub fn build_scene(model: &Model, dpi: f32) -> Scene {
             dpi,
         )
     });
+    // The native overlay draws two frames while the text box is open: the one on
+    // the edit box itself, with round dots, and a wider one around the padded
+    // area the pointer grabs, with square handles on the hit-test spots.
+    let editor_outer = model.editing.then(|| {
+        let outer = model.text_outer();
+        rect(outer.x, outer.y, outer.w, outer.h, dpi)
+    });
+    let editor_handles = if model.editing {
+        handles(platform::region::Selection {
+            x: model.edit_pos.x,
+            y: model.edit_pos.y,
+            w: model.edit_w,
+            h: model.edit_h,
+        })
+        .into_iter()
+        .map(|(x, y)| OverlayPoint {
+            x: to_window(x, dpi),
+            y: to_window(y, dpi),
+        })
+        .collect()
+    } else {
+        Vec::new()
+    };
+    let editor_outer_handles = if model.editing {
+        text_handles(model.text_outer())
+            .into_iter()
+            .map(|(_, x, y)| OverlayPoint {
+                x: to_window(x, dpi),
+                y: to_window(y, dpi),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     Scene {
         dims,
@@ -265,12 +306,21 @@ pub fn build_scene(model: &Model, dpi: f32) -> Scene {
         badge_text,
         hint,
         editor,
+        editor_outer,
+        editor_handles,
+        editor_outer_handles,
         editor_font_size: to_window(model.font_size.max(18), dpi),
     }
 }
 
 /// The fill of a button, as the native overlay chooses it.
-fn button_fill(palette: &Palette, role: Role, enabled: bool, primary: bool, swatch: Option<usize>) -> u32 {
+fn button_fill(
+    palette: &Palette,
+    role: Role,
+    enabled: bool,
+    primary: bool,
+    swatch: Option<usize>,
+) -> u32 {
     if let Some(swatch) = swatch {
         palette.SWATCHES[swatch]
     } else if !enabled {
@@ -350,7 +400,14 @@ fn button_scene(model: &Model, button: &Button, dpi: f32) -> OverlayButton {
 }
 
 /// Adds one window element for a path annotation.
-fn push_path(out: &mut Vec<OverlayShape>, commands: String, kind: i32, ink: u32, width: i32, dpi: f32) {
+fn push_path(
+    out: &mut Vec<OverlayShape>,
+    commands: String,
+    kind: i32,
+    ink: u32,
+    width: i32,
+    dpi: f32,
+) {
     out.push(OverlayShape {
         kind,
         commands: commands.into(),
@@ -490,6 +547,7 @@ fn push_shape(out: &mut Vec<OverlayShape>, shape: &Shape, model: &Model, dpi: f3
                 y: px(at.y),
                 width: px(*wrap),
                 text: text.clone().into(),
+                font: shape.font_name.clone().into(),
                 font_size: px(shape.font_size.max(18)),
                 color: color(shape.color),
                 ..Default::default()
@@ -508,7 +566,6 @@ fn install_chrome(ui: &OverlayWindow, palette: &Palette, scale: u32, dpi: f32) {
     ui.set_hint_shadow(color(palette.HINT_SHADOW));
     ui.set_glyph_size(to_window(glyph_size(scale), dpi));
     ui.set_label_size(to_window(label_size(scale), dpi));
-    ui.set_text_pad(to_window(text_pad(scale), dpi));
     ui.set_handle_size(to_window(10, dpi));
     ui.set_unit(1.0 / dpi);
 }
@@ -521,8 +578,7 @@ fn install_frame(ui: &OverlayWindow, model: &Model) {
         ui.set_frame_image(slint::Image::default());
         return;
     }
-    let mut buffer =
-        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(frame.width, frame.height);
+    let mut buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(frame.width, frame.height);
     let pixels = buffer.make_mut_bytes();
     let source = &frame.data;
     for index in 0..(frame.width as usize * frame.height as usize) {
@@ -569,11 +625,24 @@ fn apply(ui: &OverlayWindow, state: &Rc<RefCell<State>>) {
         ui.set_badge_text(scene.badge_text.into());
     }
     ui.set_hint_text(scene.hint.unwrap_or_default().into());
+    // The handles belong to the open editor; empty lists remove them when it
+    // closes, so the window never keeps a stale set.
+    ui.set_editor_handles(ModelRc::new(slint::VecModel::from(scene.editor_handles)));
+    ui.set_editor_outer_handles(ModelRc::new(slint::VecModel::from(
+        scene.editor_outer_handles,
+    )));
     if let Some(editor) = scene.editor {
         ui.set_editor(editor);
+        if let Some(outer) = scene.editor_outer {
+            ui.set_editor_outer(outer);
+        }
         ui.set_editor_font_size(scene.editor_font_size);
         ui.set_editor_ink(edit_ink);
-        ui.set_editor_text(edit_text.into());
+        // The window owns the text while it is being typed; rebuilding the scene
+        // must not put the version this module last saw back into the field.
+        if !had_editor {
+            ui.set_editor_text(edit_text.into());
+        }
         ui.set_has_editor(true);
     } else {
         ui.set_has_editor(false);
@@ -596,7 +665,11 @@ fn still(state: &Rc<RefCell<State>>) -> Option<platform::Frame> {
 /// the grabbed monitor, so a click on a 200% display arrives at half the
 /// distance from the origin unless it is multiplied back.
 fn pointer_to_model(x: i32, y: i32, dpi: f32, width: i32, height: i32) -> Point {
-    let dpi = if dpi.is_finite() && dpi > 0.0 { dpi } else { 1.0 };
+    let dpi = if dpi.is_finite() && dpi > 0.0 {
+        dpi
+    } else {
+        1.0
+    };
     Point {
         x: ((x as f32 * dpi).round() as i32).clamp(0, width),
         y: ((y as f32 * dpi).round() as i32).clamp(0, height),
@@ -618,14 +691,45 @@ fn model_point(state: &State, x: i32, y: i32) -> Point {
     )
 }
 
-fn pointer_down(ui: &OverlayWindow, state: &Rc<RefCell<State>>, x: i32, y: i32) {
+fn pointer_down(ui: &OverlayWindow, state: &Rc<RefCell<State>>, x: i32, y: i32, middle: bool) {
     let (point, was_editing) = {
         let current = state.borrow();
         (model_point(&current, x, y), current.model.editing)
     };
+    if middle {
+        // The native overlay moves the open text box with the middle button.
+        if was_editing && state.borrow().model.over_text_box(point) {
+            state.borrow_mut().model.begin_text_move(point);
+        }
+        return;
+    }
     if was_editing {
-        if state.borrow().model.inside_edit(point) {
-            // The text box itself takes the press.
+        // The native overlay's order: a handle resizes, the border moves, the
+        // editor takes a click inside it, and anything else commits the text.
+        let (handle, border, inside) = {
+            let current = state.borrow();
+            (
+                if current.model.inside_edit(point) {
+                    // GDI's edit control checks the band inside its own edges
+                    // before the caret sees the click.
+                    current.model.hit_edit_edge_handle(point)
+                } else {
+                    current.model.hit_text_handle(point)
+                },
+                current.model.in_text_border(point),
+                current.model.inside_edit(point),
+            )
+        };
+        if let Some(handle) = handle {
+            state.borrow_mut().model.begin_text_size(handle, point);
+            return;
+        }
+        if border {
+            state.borrow_mut().model.begin_text_move(point);
+            return;
+        }
+        if inside {
+            // The text field itself takes the press and moves the caret.
             return;
         }
         commit_editor(ui, state);
@@ -658,7 +762,18 @@ fn pointer_move(ui: &OverlayWindow, state: &Rc<RefCell<State>>, x: i32, y: i32) 
         let current = state.borrow();
         model_point(&current, x, y)
     };
-    let action = state.borrow_mut().model.mouse_move(point);
+    let action = {
+        let mut current = state.borrow_mut();
+        let action = current.model.mouse_move(point);
+        if matches!(
+            current.model.drag,
+            Some(Drag::TextMove(_, _)) | Some(Drag::TextSize(_, _, _, _, _))
+        ) {
+            // The native overlay keeps the text box on screen while it moves.
+            current.model.clamp_edit();
+        }
+        action
+    };
     act(ui, state, action);
 }
 
@@ -711,9 +826,13 @@ fn key_event(
         return;
     };
     if state.borrow().model.editing {
-        // The text box owns the keyboard; leaving it is the overlay's.
-        if key == Key::Escape {
-            cancel_editor(ui, state);
+        // Normally the text field has the keyboard and handles these itself.
+        // After a press on its border moved or resized the box the field can
+        // lose the keyboard, so the overlay keeps the native overlay's keys.
+        match key {
+            Key::Escape => cancel_editor(ui, state),
+            Key::Enter => commit_editor(ui, state),
+            _ => {}
         }
         return;
     }
@@ -730,9 +849,13 @@ fn commit_editor(ui: &OverlayWindow, state: &Rc<RefCell<State>>) {
         if !current.model.editing {
             return;
         }
-        let text = current.edit_text.clone();
+        // The window is the one that received the typed characters, so its text
+        // is the text to commit; the copy here only lags behind until an event
+        // commits it.
+        let text = ui.get_editor_text().to_string();
         let origin = current.model.edit_pos;
         let wrap = current.model.edit_w;
+        current.edit_text = text.clone();
         current.model.commit_text(text, origin, wrap, &Estimate)
     };
     act(ui, state, action);
@@ -836,11 +959,10 @@ fn report(error: impl std::fmt::Display) {
 fn bind_callbacks(ui: &OverlayWindow, state: &Rc<RefCell<State>>) {
     let window = ui.as_weak();
     let shared = state.clone();
-    ui.on_pointer_down(move |x, y, _middle| {
-        // The middle button only moves the native text box, which the Slint
-        // overlay does not offer.
+    ui.on_pointer_down(move |x, y, middle| {
+        // The middle button moves the open text box, like the native overlay.
         if let Some(ui) = window.upgrade() {
-            pointer_down(&ui, &shared, x, y);
+            pointer_down(&ui, &shared, x, y, middle);
         }
     });
 
@@ -980,6 +1102,14 @@ fn settle(ui: &OverlayWindow, state: &Rc<RefCell<State>>) {
         move || {
             if let (Some(ui), Some(shared)) = (window.upgrade(), shared.upgrade()) {
                 refit(&ui, &shared);
+                if platform::region::overlay_fullscreen() {
+                    // Recorded because the Wayland panel is only covered while
+                    // the compositor agrees that the window is fullscreen.
+                    platform::logging::info(format!(
+                        "area overlay: fullscreen {}",
+                        ui.window().is_fullscreen()
+                    ));
+                }
             }
             // The window is mapped by now: put it above the shell's task bar even
             // when the toolkit applied always-on-top only after the first show.
@@ -1013,6 +1143,13 @@ fn create(
         place(&ui, &current.model);
         install_frame(&ui, &current.model);
     }
+    // Asking for fullscreen before the surface is mapped is what the Wayland
+    // protocol expects (`xdg_toplevel.set_fullscreen` is a pre-map request);
+    // asking after `show()` leaves the shell's panel and dock above the
+    // overlay on mutter. Windows does not ask for fullscreen at all.
+    if platform::region::overlay_fullscreen() {
+        ui.window().set_fullscreen(true);
+    }
     apply(&ui, &state);
     bind_callbacks(&ui, &state);
     // A close request (Alt+F4) cancels the selection, like the native overlay's
@@ -1039,6 +1176,11 @@ pub fn spawn(model: Model) {
                 report(error);
                 return;
             }
+            if platform::region::overlay_fullscreen() && !ui.window().is_fullscreen() {
+                // The compositor may have dropped the pre-map request; asking
+                // again after the window exists is harmless when it stuck.
+                ui.window().set_fullscreen(true);
+            }
             platform::shell::raise_overlay_window();
             settle(&ui, &state);
             let previous = VISIBLE.with(|slot| {
@@ -1061,6 +1203,9 @@ pub fn run(model: Model) {
                 report(error);
                 return;
             }
+            if platform::region::overlay_fullscreen() && !ui.window().is_fullscreen() {
+                ui.window().set_fullscreen(true);
+            }
             settle(&ui, &state);
             if let Err(error) = ui.run() {
                 report(error);
@@ -1074,7 +1219,7 @@ pub fn run(model: Model) {
 mod tests {
     use super::*;
     use platform::palette;
-    use platform::region::{Overlay, Selection};
+    use platform::region::{Handle, Overlay, Selection};
     use platform::{Frame, Rect};
 
     fn fixture(overlay: Overlay) -> Model {
@@ -1085,6 +1230,7 @@ mod tests {
                 width: 800,
                 height: 600,
                 data: vec![0; 800 * 600 * 4],
+                age_ns: 0,
             },
             Rect {
                 x: 0,
@@ -1111,25 +1257,37 @@ mod tests {
     #[test]
     fn a_logical_pointer_is_scaled_back_to_screen_pixels() {
         // 100%: the window's logical pixels are the screen's pixels.
-        assert_eq!(pointer_to_model(400, 300, 1.0, 3200, 2000), Point { x: 400, y: 300 });
+        assert_eq!(
+            pointer_to_model(400, 300, 1.0, 3200, 2000),
+            Point { x: 400, y: 300 }
+        );
         // 200%: a click at logical (400, 300) is physical (800, 600).
-        assert_eq!(pointer_to_model(400, 300, 2.0, 3200, 2000), Point { x: 800, y: 600 });
+        assert_eq!(
+            pointer_to_model(400, 300, 2.0, 3200, 2000),
+            Point { x: 800, y: 600 }
+        );
         // 150%: rounding keeps the pixel the user aimed at.
-        assert_eq!(pointer_to_model(401, 301, 1.5, 3200, 2000), Point { x: 602, y: 452 });
+        assert_eq!(
+            pointer_to_model(401, 301, 1.5, 3200, 2000),
+            Point { x: 602, y: 452 }
+        );
     }
 
     #[test]
     fn a_pointer_past_the_edge_stays_inside_the_frame() {
-        assert_eq!(pointer_to_model(-10, -10, 2.0, 3200, 2000), Point { x: 0, y: 0 });
+        assert_eq!(
+            pointer_to_model(-10, -10, 2.0, 3200, 2000),
+            Point { x: 0, y: 0 }
+        );
         assert_eq!(
             pointer_to_model(4000, 3000, 2.0, 3200, 2000),
-            Point {
-                x: 3200,
-                y: 2000
-            }
+            Point { x: 3200, y: 2000 }
         );
         // A broken scale factor must not turn every click into (0, 0).
-        assert_eq!(pointer_to_model(100, 200, f32::NAN, 3200, 2000), Point { x: 100, y: 200 });
+        assert_eq!(
+            pointer_to_model(100, 200, f32::NAN, 3200, 2000),
+            Point { x: 100, y: 200 }
+        );
     }
     fn button(model: &Model, scene: &Scene, role: Role) -> OverlayButton {
         let shown: Vec<&Button> = model.buttons.iter().filter(|button| button.shown).collect();
@@ -1191,20 +1349,8 @@ mod tests {
             }
         );
         assert_eq!(scene.handles.len(), 8);
-        assert_eq!(
-            scene.handles[0],
-            OverlayPoint {
-                x: 100.0,
-                y: 150.0
-            }
-        );
-        assert_eq!(
-            scene.handles[3],
-            OverlayPoint {
-                x: 300.0,
-                y: 250.0
-            }
-        );
+        assert_eq!(scene.handles[0], OverlayPoint { x: 100.0, y: 150.0 });
+        assert_eq!(scene.handles[3], OverlayPoint { x: 300.0, y: 250.0 });
         // The pen tool keeps the area but hides the resize handles.
         let mut pen = model;
         pen.tool = Tool::Pen;
@@ -1213,14 +1359,76 @@ mod tests {
     }
 
     #[test]
+    fn an_open_text_box_gets_handles_on_the_edit_box_the_model_presses() {
+        let mut model = selected(Overlay::Screenshot);
+        model.edit_pos = Point { x: 120, y: 180 };
+        model.edit_w = 240;
+        model.edit_h = 80;
+        model.editing = true;
+        model.layout(&Estimate);
+        let scene = build_scene(&model, 1.0);
+        // The native overlay draws both frames: the wide one around the padded
+        // hit area, with square grabs on the spots the model tests, and the one
+        // on the edit box itself, with round dots.
+        let outer = model.text_outer();
+        let expected: [(f32, f32); 8] = [
+            (outer.x as f32, outer.y as f32),
+            (outer.right() as f32, outer.y as f32),
+            (outer.x as f32, outer.bottom() as f32),
+            (outer.right() as f32, outer.bottom() as f32),
+            ((outer.x + outer.w / 2) as f32, outer.y as f32),
+            ((outer.x + outer.w / 2) as f32, outer.bottom() as f32),
+            (outer.x as f32, (outer.y + outer.h / 2) as f32),
+            (outer.right() as f32, (outer.y + outer.h / 2) as f32),
+        ];
+        assert_eq!(scene.editor_outer_handles.len(), 8);
+        for (point, (x, y)) in scene.editor_outer_handles.iter().zip(expected) {
+            assert_eq!((point.x, point.y), (x, y));
+            assert!(
+                model
+                    .hit_text_handle(Point {
+                        x: point.x as i32,
+                        y: point.y as i32
+                    })
+                    .is_some(),
+                "the outer grab at {point:?} cannot be pressed"
+            );
+        }
+        // The edit box frame and its dots sit on the edit box itself.
+        assert_eq!(
+            scene.editor_outer,
+            Some(OverlayRect {
+                x: outer.x as f32,
+                y: outer.y as f32,
+                width: outer.w as f32,
+                height: outer.h as f32,
+            })
+        );
+        assert_eq!(scene.editor_handles.len(), 8);
+        assert_eq!(scene.editor_handles[0], OverlayPoint { x: 120.0, y: 180.0 });
+        assert_eq!(scene.editor_handles[3], OverlayPoint { x: 360.0, y: 260.0 });
+        assert_eq!(
+            model.hit_text_handle(Point { x: 120, y: 180 }),
+            Some(Handle::NW)
+        );
+        // The padding between the handles moves the box instead of resizing it.
+        assert!(model.in_text_border(Point {
+            x: outer.x + 20,
+            y: outer.y
+        }));
+        // Both frames and both handle sets belong to the open editor.
+        model.editing = false;
+        let closed = build_scene(&model, 1.0);
+        assert!(closed.editor_handles.is_empty());
+        assert!(closed.editor_outer_handles.is_empty());
+        assert!(closed.editor_outer.is_none());
+    }
+
+    #[test]
     fn the_dim_cover_leaves_exactly_the_selection_out() {
         let scene = build_scene(&selected(Overlay::Screenshot), 1.0);
         assert_eq!(scene.dims.len(), 4);
-        let area: f32 = scene
-            .dims
-            .iter()
-            .map(|rect| rect.width * rect.height)
-            .sum();
+        let area: f32 = scene.dims.iter().map(|rect| rect.width * rect.height).sum();
         assert_eq!(area, 800.0 * 600.0 - 200.0 * 100.0);
         let empty = build_scene(&fixture(Overlay::Screenshot), 1.0);
         assert_eq!(empty.dims.len(), 1);
@@ -1281,13 +1489,7 @@ mod tests {
                 height: 50.0
             }
         );
-        assert_eq!(
-            scene.handles[0],
-            OverlayPoint {
-                x: 50.0,
-                y: 75.0
-            }
-        );
+        assert_eq!(scene.handles[0], OverlayPoint { x: 50.0, y: 75.0 });
         assert_eq!(
             scene.dims[0],
             OverlayRect {

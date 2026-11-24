@@ -7,15 +7,16 @@
 
 use platform_core::frame::fit;
 use platform_core::i18n::{tr, trf};
-use platform_core::screen::{crop_for, source_row, window_state_usable};
+use platform_core::screen::{crop_for, source_row, window_state_usable, MonitorInfo};
 use platform_core::types::{Frame, Rect};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, HDC, HMONITOR, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST,
+    MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowPlacement, IsIconic, IsWindow, IsWindowVisible, SW_MINIMIZE, SW_SHOWMINIMIZED,
@@ -68,6 +69,10 @@ impl GraphicsCaptureApiHandler for Handler {
         frame: &mut WgcFrame,
         _control: InternalCaptureControl,
     ) -> Result<(), Self::Error> {
+        // Read the frame's own capture time before touching its pixels: the
+        // pool hands frames over late, and the loop needs that delay to place
+        // the picture where it actually happened.
+        let age_ns = frame_age_ns(frame);
         let buffer = match self.crop {
             Some((x, y, w, h)) => {
                 let max_w = frame.width();
@@ -106,9 +111,75 @@ impl GraphicsCaptureApiHandler for Handler {
             width,
             height,
             data,
+            age_ns,
         });
         self.slot.arrived.notify_all();
         Ok(())
+    }
+}
+
+/// A frame's age right now: the performance counter minus the frame's own
+/// system-relative timestamp. Both count from the same boot epoch.
+fn frame_age_ns(frame: &WgcFrame) -> u64 {
+    let stamp = match frame.timestamp() {
+        Ok(stamp) => stamp.Duration,
+        Err(error) => {
+            warn_once(&format!("frame timestamp unavailable: {error}"));
+            return 0;
+        }
+    };
+    let mut counter = 0i64;
+    let mut frequency = 0i64;
+    // SAFETY: Both calls write into locals and have no other preconditions.
+    unsafe {
+        QueryPerformanceCounter(&mut counter).ok();
+        QueryPerformanceFrequency(&mut frequency).ok();
+    }
+    age_ns_from_qpc(counter, frequency, stamp)
+}
+
+/// Converts the two clocks into an age in nanoseconds. The performance counter
+/// is in frequency ticks, the frame stamp in 100-ns units; a stamp ahead of the
+/// counter (clock skew) or a missing clock means "unknown", which is zero.
+fn age_ns_from_qpc(counter: i64, frequency: i64, stamp_100ns: i64) -> u64 {
+    if counter <= 0 || frequency <= 0 || stamp_100ns <= 0 {
+        return 0;
+    }
+    let now_ns = (i128::from(counter) * 1_000_000_000 / i128::from(frequency)) as u64;
+    let stamp_ns = (stamp_100ns as u128 * 100) as u64;
+    now_ns.saturating_sub(stamp_ns)
+}
+
+/// Logs the first failure of the frame clock only: a broken timestamp would
+/// otherwise repeat on every frame.
+fn warn_once(message: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        platform_core::logging::warn(message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::age_ns_from_qpc;
+
+    #[test]
+    fn the_frame_age_is_the_counter_minus_its_stamp() {
+        // 5 s on a 10 MHz counter, with a stamp 200 ms older.
+        assert_eq!(age_ns_from_qpc(50_000_000, 10_000_000, 48_000_000), 200_000_000);
+    }
+
+    #[test]
+    fn a_stamp_ahead_of_the_counter_is_zero_not_a_huge_age() {
+        assert_eq!(age_ns_from_qpc(50_000_000, 10_000_000, 51_000_000), 0);
+    }
+
+    #[test]
+    fn a_missing_clock_reports_unknown() {
+        assert_eq!(age_ns_from_qpc(50_000_000, 0, 48_000_000), 0);
+        assert_eq!(age_ns_from_qpc(50_000_000, 10_000_000, 0), 0);
+        assert_eq!(age_ns_from_qpc(0, 10_000_000, 48_000_000), 0);
     }
 }
 
@@ -511,6 +582,81 @@ fn cloaked(hwnd: HWND) -> bool {
         )
     };
     read.is_ok() && value != 0
+}
+
+/// The monitors of the desktop, in the enumerator's order, as the Settings
+/// window lists them. A monitor's id is its device name, which Windows keeps
+/// stable across restarts and reconnects.
+/// MONITORINFOF_PRIMARY: this monitor is the main display. The windows 0.58
+/// bindings do not export the constant, so it is spelled out here.
+const MONITORINFOF_PRIMARY: u32 = 1;
+
+pub fn monitors() -> Vec<MonitorInfo> {
+    // SAFETY: The callback's Vec stays alive until EnumDisplayMonitors returns.
+    unsafe extern "system" fn collect(
+        monitor: HMONITOR,
+        _: HDC,
+        _: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let mut info = MONITORINFOEXW {
+            monitorInfo: MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // SAFETY: The monitor handle came from the enumerator and cbSize is that
+        // of the extended structure, which starts with MONITORINFO.
+        if unsafe {
+            GetMonitorInfoW(
+                monitor,
+                std::ptr::addr_of_mut!(info).cast::<MONITORINFO>(),
+            )
+        }
+        .as_bool()
+        {
+            let name = String::from_utf16_lossy(
+                &info.szDevice[..info
+                    .szDevice
+                    .iter()
+                    .position(|unit| *unit == 0)
+                    .unwrap_or(info.szDevice.len())],
+            );
+            let rect = info.monitorInfo.rcMonitor;
+            let primary = info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0;
+            // SAFETY: data is the Vec passed into EnumDisplayMonitors and it
+            // outlives this callback.
+            unsafe { &mut *(data.0 as *mut Vec<MonitorInfo>) }.push(MonitorInfo {
+                id: name.clone(),
+                name: name.strip_prefix(r"\\.\").unwrap_or(&name).to_string(),
+                width: (rect.right - rect.left).max(0) as u32,
+                height: (rect.bottom - rect.top).max(0) as u32,
+                primary,
+                x: rect.left,
+                y: rect.top,
+            });
+        }
+        BOOL(1)
+    }
+    let mut monitors = Vec::new();
+    unsafe {
+        // SAFETY: collect only writes into monitors, which lives until this call returns.
+        EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect),
+            LPARAM(&mut monitors as *mut Vec<MonitorInfo> as isize),
+        )
+    }
+    .ok();
+    monitors
+}
+
+/// Whether the Settings window can offer a monitor choice: EnumDisplayMonitors
+/// works on every Windows session.
+pub fn monitors_supported() -> bool {
+    true
 }
 
 fn monitor_list() -> Vec<Rect> {

@@ -5,4 +5,6 @@
 //! pixels and running a capture stream is the backend's job.
 
 pub use crate::backend::screen::*;
-pub use platform_core::screen::{crop_for, source_row, window_state_usable};
+pub use platform_core::screen::{
+    crop_for, monitor_rect, source_row, window_state_usable, MonitorInfo,
+};

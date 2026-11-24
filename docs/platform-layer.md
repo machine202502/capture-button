@@ -70,3 +70,80 @@ bake annotations through the same code.
 Ports that have no direct equivalent (Wayland window lists, tray on GNOME,
 global hotkeys) are expected to report "unsupported" rather than fake a result;
 the application must degrade gracefully.
+
+## Linux: what Wayland cannot do
+
+The Linux backend is built and runs on both X11 and Wayland. It draws the area
+overlay with the Slint renderer, captures through
+`org.freedesktop.portal.ScreenCast` on Wayland, and publishes the tray as a
+StatusNotifierItem. Three limits are properties of Wayland, not bugs in the
+application; they were measured on the e2e stand (Ubuntu 24.04, GNOME 46,
+mutter) and are recorded here so nobody re-opens them as application defects.
+
+### The shell's panel and dock stay above the area overlay
+
+The Slint overlay is an ordinary `xdg_toplevel`. It asks for fullscreen before
+the surface is mapped (`xdg_toplevel.set_fullscreen`, confirmed with
+`WAYLAND_DEBUG=1`) and mutter answers with a 1920×1080 configure, but GNOME
+hides its panel and dock only for the *activated* fullscreen window. A Wayland
+client cannot activate a window by itself: it needs an `xdg_activation_v1` token
+tied to a recent input serial, and neither Slint nor winit exposes that request.
+Opening the overlay from the tray therefore leaves the panel and the dock on
+top; a native GNOME app in fullscreen (`gnome-terminal --full-screen`) hides
+both on the same session, which is what places the gap in our window type rather
+than in the session.
+
+Removing the panel for good needs the overlay in a layer above the shell, i.e.
+`wlr-layer-shell`/`gtk-layer-shell`; Slint has no layer-shell window. X11 is not
+affected: there the overlay sets `_NET_WM_STATE_FULLSCREEN` and
+`_NET_WM_STATE_ABOVE` and covers both. This is the one visual difference between
+the two sessions.
+
+### The frozen frame comes from the portal
+
+The overlay draws a still of the screen. On X11 that is an XGetImage call; on
+Wayland it is another ScreenCast request, so the first area selection after a
+fresh start shows the portal's share dialog (later ones reuse the stored
+`restore_token` and freeze immediately). If that request is cancelled, the
+overlay cannot open and the application reports
+`the native overlay is not available on Linux; use the Slint overlay` — an
+honest failure rather than an overlay over a stale frame.
+
+### The tray item only opens the window
+
+The tray's window item is always "Open window": its click restores, raises and
+focuses the main window and never hides it. The item used to toggle into
+"Close window" when the platform could report that the window was in front, but
+that state was only observable on some desktops (Wayland reports neither the
+focus nor the minimized state) and the item proved unreliable, so the toggle is
+gone everywhere.
+
+Closing the window stays where it belongs: the window's own close button (which
+hides to the tray when “Close button hides to the tray” is on, otherwise quits),
+and Exit in the tray menu. The platform layer still offers
+`platform::shell::tray_click_hint()` so the settings page can explain what a
+click on the icon does on that desktop.
+
+### The recording outline goes through XWayland
+
+The blinking frame around the recorded area is a shaped, click-through X11
+window (`platform-linux/src/outline.rs`): an override-redirect window whose
+bounding shape is only the perimeter and whose input shape is empty, so clicks
+reach the desktop through the frame. On Wayland the same window is drawn through
+XWayland, which composes it above the Wayland windows and the GNOME panel. The
+application needs a reachable X11 display (`DISPLAY` and `XAUTHORITY`, which a
+GNOME session gives its applications) and the Shape extension; without XWayland
+the frame is skipped with one warning and Settings hides the row. The "above the
+panel" behaviour was measured on mutter 46.2 and is compositor behaviour, not a
+protocol guarantee. On plain X11 the frame is skipped as well when the server
+does not offer Shape, rather than drawing a window that would swallow clicks.
+
+### The source picker belongs to the desktop
+
+`screencast`'s monitor/window list is drawn by `xdg-desktop-portal-gnome`, not
+by the application: the app sends `SelectSources` with the `types` the take
+allows (`Monitor` for a screenshot, `Monitor | Window` for a recording) and the
+portal lists what its backend offers. On the e2e VM the single QEMU connector
+`Virtual-1` has no name, so the portal labels it "Unknown Display"; the
+"Application Window" tab lists the windows. An empty list therefore means the
+portal could not enumerate sources, and the application never fabricates one.

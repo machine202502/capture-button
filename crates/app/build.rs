@@ -9,8 +9,16 @@ fn copy_locales() {
     let Ok(out_dir) = std::env::var("OUT_DIR").map(PathBuf::from) else {
         return;
     };
-    // OUT_DIR is <target>/<profile>/build/<package>-<hash>/out.
-    let Some(profile_dir) = out_dir.ancestors().nth(3) else {
+    // OUT_DIR is <target>/<profile>/build/<package>-<hash>/out. Find the
+    // `build` component instead of counting parents: the exact depth differs
+    // between Cargo layouts and a wrong count silently loses the catalogs.
+    let Some(build_dir) = out_dir
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "build"))
+    else {
+        return;
+    };
+    let Some(profile_dir) = build_dir.parent() else {
         return;
     };
     let source = Path::new("../../locales");

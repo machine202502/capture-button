@@ -57,6 +57,8 @@ export struct OverlayShape {
     width: length,
     height: length,
     text: string,
+    /// The face the model recorded for a text shape.
+    font: string,
     font-size: length,
     radius: length,
 }
@@ -82,7 +84,7 @@ component OverlayShapeView inherits Rectangle {
         text: shape.text;
         color: shape.color;
         font-size: shape.font-size;
-        font-family: "Segoe UI";
+        font-family: shape.font;
         wrap: word-wrap;
         horizontal-alignment: left;
         vertical-alignment: top;
@@ -105,6 +107,27 @@ component OverlayShapeView inherits Rectangle {
     }
 }
 
+/// One edge band of the open text box, where the native edit control starts a
+/// resize. It has to sit above the `TextInput` (which would take the press for
+/// the caret) and stay a fixed element while the box is dragged, so the grab
+/// survives the window updates.
+component EditorEdgeArea inherits TouchArea {
+    callback press(x: int, y: int, middle: bool);
+    callback drag(x: int, y: int);
+    callback release(x: int, y: int);
+
+    mouse-cursor: crosshair;
+    pointer-event(event) => {
+        if (event.kind == PointerEventKind.down) {
+            root.press(round((self.mouse-x + self.x) / 1px), round((self.mouse-y + self.y) / 1px), event.button == PointerEventButton.middle);
+        } else if (event.kind == PointerEventKind.up) {
+            root.release(round((self.mouse-x + self.x) / 1px), round((self.mouse-y + self.y) / 1px));
+        } else if (event.kind == PointerEventKind.move || event.kind == PointerEventKind.cancel) {
+            root.drag(round((self.mouse-x + self.x) / 1px), round((self.mouse-y + self.y) / 1px));
+        }
+    }
+}
+
 export component OverlayWindow inherits Window {
     /// The frozen screen, one pixel per window pixel.
     in property <image> frame-image;
@@ -124,17 +147,28 @@ export component OverlayWindow inherits Window {
 
     in property <string> hint-text: "";
 
-    /// The text box, placed at the model's edit box; its frame is the same box
-    /// grown by `text-pad`.
+    /// The text box: the edit box the model keeps, which is also where the
+    /// native overlay paints its frame and handles.
     in property <bool> has-editor: false;
     in property <OverlayRect> editor;
+    /// The wider frame around the padded area the pointer grabs.
+    in property <OverlayRect> editor-outer;
+    /// The eight resize handles on the edit box (round dots).
+    in property <[OverlayPoint]> editor-handles;
+    /// The eight resize handles on the padded frame (square grabs).
+    in property <[OverlayPoint]> editor-outer-handles;
     in property <length> editor-font-size: 18px;
     in property <color> editor-ink: #ffffff;
     in-out property <string> editor-text: "";
+    /// The middle-button area above the text field is armed until a left press
+    /// uses it, then disarmed for that press so the press and the caret reach
+    /// the field below. A later hover or the end of a drag arms it again.
+    in-out property <bool> middle-armed: true;
+    /// Set while this component is moving the box with the middle button.
+    property <bool> middle-dragging: false;
 
     in property <length> glyph-size: 17px;
     in property <length> label-size: 15px;
-    in property <length> text-pad: 8px;
     /// One model pixel in logical units: the chrome constants below are the
     /// native overlay's screen pixels, and Slint lengths are logical.
     in property <float> unit: 1;
@@ -157,29 +191,31 @@ export component OverlayWindow inherits Window {
     callback cancel-text();
     callback focus-keys();
 
+    /// The text field takes the keyboard when it opens; give the overlay its
+    /// keys back after it closes, the way the native overlay refocuses its window.
+    focus-keys => {
+        keys.focus();
+    }
+
+    /// The text field takes the keyboard when it opens, including after a drag
+    /// that moved the box but not the keyboard focus.
+    changed has-editor => {
+        if (self.has-editor) {
+            text-field.focus();
+            self.middle-armed = true;
+            self.middle-dragging = false;
+        }
+    }
+
     title: "Capture Button area";
     no-frame: true;
     always-on-top: true;
     background: #000000;
 
-    // Input first, so the pointer reaches it whatever is drawn on top; the
-    // other elements are shapes and text, which never take the mouse.
-    TouchArea {
-        x: 0;
-        y: 0;
-        width: 100%;
-        height: 100%;
-        pointer-event(event) => {
-            if (event.kind == PointerEventKind.down) {
-                root.pointer-down(round(self.mouse-x / 1px), round(self.mouse-y / 1px), event.button == PointerEventButton.middle);
-            } else if (event.kind == PointerEventKind.up) {
-                root.pointer-up(round(self.mouse-x / 1px), round(self.mouse-y / 1px));
-            } else if (event.kind == PointerEventKind.move || event.kind == PointerEventKind.cancel) {
-                root.pointer-move(round(self.mouse-x / 1px), round(self.mouse-y / 1px));
-            }
-        }
-    }
-
+    // The keyboard scope comes first, so the pointer TouchArea below it is in
+    // front for input: a `FocusScope` takes the next press when it does not
+    // hold the keyboard (the text field does while it is open), which used to
+    // eat the first click on the frame or a handle.
     keys := FocusScope {
         x: 0;
         y: 0;
@@ -191,6 +227,34 @@ export component OverlayWindow inherits Window {
         key-pressed(event) => {
             root.key-event(event.text, event.modifiers.control, event.modifiers.shift);
             return EventResult.accept;
+        }
+    }
+
+    // Input in front of the keyboard scope; the other elements are shapes and
+    // text, which never take the mouse. The native overlay's window class shows
+    // the same crosshair everywhere.
+    TouchArea {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        mouse-cursor: crosshair;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.pointer-down(round(self.mouse-x / 1px), round(self.mouse-y / 1px), event.button == PointerEventButton.middle);
+            } else if (event.kind == PointerEventKind.up) {
+                root.pointer-up(round(self.mouse-x / 1px), round(self.mouse-y / 1px));
+                // The drag that a left press started is over; let the middle
+                // area above the text field take the next middle press.
+                root.middle-armed = true;
+            } else if (event.kind == PointerEventKind.move || event.kind == PointerEventKind.cancel) {
+                // Hovering without a button re-arms the middle area after a
+                // caret click, which grabbed the release inside the text field.
+                if (!self.pressed) {
+                    root.middle-armed = true;
+                }
+                root.pointer-move(round(self.mouse-x / 1px), round(self.mouse-y / 1px));
+            }
         }
     }
 
@@ -345,18 +409,46 @@ export component OverlayWindow inherits Window {
         }
     }
 
+    // The native overlay draws two frames while the text box is open: a wide
+    // one around the padded area the pointer grabs (with square handles on the
+    // hit-test spots), and the one on the edit box itself (with round dots).
     if root.has-editor : Rectangle {
-        x: root.editor.x - root.text-pad;
-        y: root.editor.y - root.text-pad;
-        width: root.editor.width + root.text-pad * 2;
-        height: root.editor.height + root.text-pad * 2;
+        x: root.editor-outer.x;
+        y: root.editor-outer.y;
+        width: root.editor-outer.width;
+        height: root.editor-outer.height;
         border-radius: 6px * root.unit;
         border-width: 2px * root.unit;
         border-color: root.accent;
         background: transparent;
     }
 
-    if root.has-editor : TextInput {
+    for point in root.editor-outer-handles : Rectangle {
+        x: point.x - 4px * root.unit;
+        y: point.y - 4px * root.unit;
+        width: 8px * root.unit;
+        height: 8px * root.unit;
+        background: root.white;
+        border-width: 1px * root.unit;
+        border-color: root.accent;
+    }
+
+    if root.has-editor : Rectangle {
+        x: root.editor.x;
+        y: root.editor.y;
+        width: root.editor.width;
+        height: root.editor.height;
+        border-radius: 5px * root.unit;
+        border-width: 3px * root.unit;
+        border-color: root.accent;
+        background: transparent;
+    }
+
+    // Kept in the tree and hidden instead of conditional so the overlay can
+    // give the keyboard back to it after a drag (the native overlay keeps its
+    // edit control focused while the box moves).
+    text-field := TextInput {
+        visible: root.has-editor;
         x: root.editor.x;
         y: root.editor.y;
         width: root.editor.width;
@@ -365,22 +457,110 @@ export component OverlayWindow inherits Window {
         color: root.editor-ink;
         font-size: root.editor-font-size;
         font-family: "Segoe UI";
-        single-line: true;
-        wrap: no-wrap;
+        // The native overlay's editor is multi-line: Shift+Enter inserts a line
+        // break, Enter alone commits.
+        single-line: false;
+        wrap: word-wrap;
         horizontal-alignment: left;
         vertical-alignment: top;
-        accepted => {
-            root.commit-text(self.text);
-        }
         key-pressed(event) => {
             if (event.text == "\u{001b}") {
                 root.cancel-text();
                 return EventResult.accept;
             }
+            if (event.text == "\u{000a}" && !event.modifiers.shift) {
+                root.commit-text(self.text);
+                return EventResult.accept;
+            }
             return EventResult.reject;
         }
-        init => {
-            self.focus();
+    }
+
+    // The native edit control resizes the box when the press lands in the band
+    // inside its own edges, and only moves the caret in the middle. Slint hands
+    // every press inside the field to the `TextInput`, so the four bands are
+    // covered with touch areas above it; the rest of the field still places the
+    // caret. The areas stay in the tree while the box is dragged: rebuilding a
+    // model here would drop the grab on the first move.
+    if root.has-editor : EditorEdgeArea {
+        x: root.editor.x;
+        y: root.editor.y;
+        width: root.editor.width;
+        height: 8px * root.unit;
+        press(x, y, middle) => { root.pointer-down(x, y, middle); }
+        drag(x, y) => { if (!self.pressed) { root.middle-armed = true; } root.pointer-move(x, y); }
+        release(x, y) => { root.pointer-up(x, y); root.middle-armed = true; }
+    }
+    if root.has-editor : EditorEdgeArea {
+        x: root.editor.x;
+        y: root.editor.y + root.editor.height - 8px * root.unit;
+        width: root.editor.width;
+        height: 8px * root.unit;
+        press(x, y, middle) => { root.pointer-down(x, y, middle); }
+        drag(x, y) => { if (!self.pressed) { root.middle-armed = true; } root.pointer-move(x, y); }
+        release(x, y) => { root.pointer-up(x, y); root.middle-armed = true; }
+    }
+    if root.has-editor : EditorEdgeArea {
+        x: root.editor.x;
+        y: root.editor.y + 8px * root.unit;
+        width: 8px * root.unit;
+        height: max(root.editor.height - 16px * root.unit, 0px);
+        press(x, y, middle) => { root.pointer-down(x, y, middle); }
+        drag(x, y) => { if (!self.pressed) { root.middle-armed = true; } root.pointer-move(x, y); }
+        release(x, y) => { root.pointer-up(x, y); root.middle-armed = true; }
+    }
+    if root.has-editor : EditorEdgeArea {
+        x: root.editor.x + root.editor.width - 8px * root.unit;
+        y: root.editor.y + 8px * root.unit;
+        width: 8px * root.unit;
+        height: max(root.editor.height - 16px * root.unit, 0px);
+        press(x, y, middle) => { root.pointer-down(x, y, middle); }
+        drag(x, y) => { if (!self.pressed) { root.middle-armed = true; } root.pointer-move(x, y); }
+        release(x, y) => { root.pointer-up(x, y); root.middle-armed = true; }
+    }
+
+    // Slint gives every press inside the text field to the `TextInput`, and the
+    // field accepts a middle press without exposing it. This area above the
+    // field starts the box move for the middle button; for a left or right
+    // press it disables itself in the callback, and Slint then delivers the
+    // same press to the field (caret) or to the edge band below (resize).
+    middle-drag := TouchArea {
+        x: root.editor-outer.x;
+        y: root.editor-outer.y;
+        width: root.editor-outer.width;
+        height: root.editor-outer.height;
+        enabled: root.has-editor && root.middle-armed;
+        mouse-cursor: crosshair;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                if (event.button == PointerEventButton.middle) {
+                    root.middle-dragging = true;
+                    root.pointer-down(round((self.mouse-x + self.x) / 1px), round((self.mouse-y + self.y) / 1px), true);
+                } else {
+                    root.middle-armed = false;
+                }
+            } else if (event.kind == PointerEventKind.move || event.kind == PointerEventKind.cancel) {
+                if (root.middle-dragging) {
+                    root.pointer-move(round((self.mouse-x + self.x) / 1px), round((self.mouse-y + self.y) / 1px));
+                }
+            } else if (event.kind == PointerEventKind.up) {
+                if (root.middle-dragging) {
+                    root.middle-dragging = false;
+                    root.pointer-up(round((self.mouse-x + self.x) / 1px), round((self.mouse-y + self.y) / 1px));
+                }
+            }
         }
+    }
+
+    // The same white dots the native overlay paints on the text box.
+    for point in root.editor-handles : Rectangle {
+        x: point.x - 5px * root.unit;
+        y: point.y - 5px * root.unit;
+        width: 10px * root.unit;
+        height: 10px * root.unit;
+        border-radius: 5px * root.unit;
+        background: root.white;
+        border-width: 1px * root.unit;
+        border-color: root.accent;
     }
 }

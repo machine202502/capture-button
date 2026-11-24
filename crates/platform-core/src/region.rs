@@ -4,7 +4,7 @@
 //! (tools, shapes, buttons, outcomes), the selection geometry, which buttons a
 //! given overlay offers and when they are enabled, and the glyph/caption of each
 //! button. A renderer asks for a scene and feeds pointer/key events back; the
-//! GDI overlay and the Slint overlay therefore share every rule and look the
+//! native overlay and the Slint overlay therefore share every rule and look the
 //! same by construction.
 //!
 //! [`Model`] holds the overlay's state and decides layout, hit-testing, text-box
@@ -19,6 +19,35 @@ use crate::types::{Format, Frame, Rect};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+
+/// How the area overlay is drawn.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RendererKind {
+    /// The backend draws the window; the application only opens it and takes
+    /// the outcome.
+    Native,
+    /// The application draws the window from `overlay.slint`.
+    Slint,
+}
+
+/// An area-overlay renderer this build offers.
+#[derive(Clone, Copy, Debug)]
+pub struct Renderer {
+    /// Stable key stored in the settings: 0, 1, 2…
+    pub id: u8,
+    /// The label the settings picker shows, supplied by the backend.
+    pub name: &'static str,
+    pub kind: RendererKind,
+}
+
+/// The renderers a platform offers, in menu order, and the one a fresh profile
+/// starts with.
+#[derive(Clone, Copy, Debug)]
+pub struct Renderers {
+    pub available: &'static [Renderer],
+    /// The [`Renderer::id`] of the default renderer.
+    pub default: u8,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -603,21 +632,39 @@ impl Model {
         if !self.editing {
             return None;
         }
-        let frame = self.text_outer();
-        let spots = [
-            (Handle::NW, frame.x, frame.y),
-            (Handle::NE, frame.right(), frame.y),
-            (Handle::SW, frame.x, frame.bottom()),
-            (Handle::SE, frame.right(), frame.bottom()),
-            (Handle::N, frame.x + frame.w / 2, frame.y),
-            (Handle::S, frame.x + frame.w / 2, frame.bottom()),
-            (Handle::W, frame.x, frame.y + frame.h / 2),
-            (Handle::E, frame.right(), frame.y + frame.h / 2),
-        ];
-        spots
+        text_handles(self.text_outer())
             .into_iter()
             .find(|(_, x, y)| (point.x - x).abs() <= 8 && (point.y - y).abs() <= 8)
             .map(|(handle, _, _)| handle)
+    }
+
+    /// The handle the open edit box's own edges grab.
+    ///
+    /// The native overlay's edit control checks this before it moves the caret
+    /// (`edit_edge_handle` in the GDI overlay), so any press in the eight-pixel
+    /// band inside the box resizes it, not only a press on one of the painted
+    /// dots. The padded frame outside the box is [`Self::hit_text_handle`] and
+    /// [`Self::in_text_border`] instead.
+    pub fn hit_edit_edge_handle(&self, point: Point) -> Option<Handle> {
+        if !self.editing || !self.inside_edit(point) {
+            return None;
+        }
+        let near = |value: i32, edge: i32| (value - edge).abs() <= 8;
+        let left = near(point.x, self.edit_pos.x);
+        let right = near(point.x, self.edit_pos.x + self.edit_w);
+        let top = near(point.y, self.edit_pos.y);
+        let bottom = near(point.y, self.edit_pos.y + self.edit_h);
+        Some(match (left, right, top, bottom) {
+            (true, _, true, _) => Handle::NW,
+            (_, true, true, _) => Handle::NE,
+            (true, _, _, true) => Handle::SW,
+            (_, true, _, true) => Handle::SE,
+            (true, _, _, _) => Handle::W,
+            (_, true, _, _) => Handle::E,
+            (_, _, true, _) => Handle::N,
+            (_, _, _, true) => Handle::S,
+            _ => return None,
+        })
     }
 
     pub fn over_text_box(&self, point: Point) -> bool {
@@ -1217,6 +1264,24 @@ pub fn handles(selection: Selection) -> [(i32, i32); 8] {
     ]
 }
 
+/// The eight resize handles of an open text box, with the edge each one drags.
+///
+/// The frame is the text box grown by the padding ([`Model::text_outer`]), so
+/// the handles sit on the visible border: the renderer draws them there and
+/// [`Model::hit_text_handle`] presses them there.
+pub fn text_handles(frame: Selection) -> [(Handle, i32, i32); 8] {
+    [
+        (Handle::NW, frame.x, frame.y),
+        (Handle::NE, frame.right(), frame.y),
+        (Handle::SW, frame.x, frame.bottom()),
+        (Handle::SE, frame.right(), frame.bottom()),
+        (Handle::N, frame.x + frame.w / 2, frame.y),
+        (Handle::S, frame.x + frame.w / 2, frame.bottom()),
+        (Handle::W, frame.x, frame.y + frame.h / 2),
+        (Handle::E, frame.right(), frame.y + frame.h / 2),
+    ]
+}
+
 /// Whether a button does something right now: undo needs a shape, redo needs an
 /// undone shape, and recording needs a source that allows it.
 pub fn role_enabled(shapes: &[Shape], redo: &[Shape], allow_record: bool, role: Role) -> bool {
@@ -1328,6 +1393,7 @@ pub fn crop_pixels(model: &Model) -> Option<Frame> {
         width: width as u32,
         height: height as u32,
         data,
+        age_ns: 0,
     })
 }
 
@@ -1413,6 +1479,7 @@ mod tests {
                 width: 800,
                 height: 600,
                 data: Vec::new(),
+                age_ns: 0,
             },
             Rect {
                 x: 0,
@@ -1427,10 +1494,22 @@ mod tests {
     #[test]
     fn a_selection_never_goes_negative_or_past_the_screen() {
         let dragged = Selection::new(Point { x: 50, y: 70 }, Point { x: 10, y: 30 });
-        assert_eq!((dragged.x, dragged.y, dragged.w, dragged.h), (10, 30, 40, 40));
+        assert_eq!(
+            (dragged.x, dragged.y, dragged.w, dragged.h),
+            (10, 30, 40, 40)
+        );
         let clamped = dragged.clamp(30, 40);
-        assert_eq!((clamped.x, clamped.y, clamped.w, clamped.h), (10, 30, 20, 10));
-        assert!(!Selection { x: 0, y: 0, w: 1, h: 1 }.usable());
+        assert_eq!(
+            (clamped.x, clamped.y, clamped.w, clamped.h),
+            (10, 30, 20, 10)
+        );
+        assert!(!Selection {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1
+        }
+        .usable());
     }
 
     #[test]
@@ -1493,7 +1572,10 @@ mod tests {
 
     #[test]
     fn opening_roles_are_video_and_cancel_on_the_tray() {
-        assert_eq!(opening_roles(Overlay::Tray), vec![Role::Video, Role::Cancel]);
+        assert_eq!(
+            opening_roles(Overlay::Tray),
+            vec![Role::Video, Role::Cancel]
+        );
         assert_eq!(opening_roles(Overlay::Capture), vec![Role::Cancel]);
         assert_eq!(opening_roles(Overlay::Screenshot), vec![Role::Cancel]);
     }
@@ -1531,7 +1613,10 @@ mod tests {
             ]
         );
         assert!(Overlay::Tray.shows_video());
-        assert_eq!(opening_roles(Overlay::Tray), vec![Role::Video, Role::Cancel]);
+        assert_eq!(
+            opening_roles(Overlay::Tray),
+            vec![Role::Video, Role::Cancel]
+        );
         assert_eq!(opening_roles(Overlay::Capture), vec![Role::Cancel]);
         assert_eq!(opening_roles(Overlay::Screenshot), vec![Role::Cancel]);
     }
@@ -1607,13 +1692,33 @@ mod tests {
             w: 200,
             h: 100,
         };
-        assert_eq!(hit_test(selection, Point { x: 100, y: 100 }), Some(Handle::NW));
-        assert_eq!(hit_test(selection, Point { x: 300, y: 200 }), Some(Handle::SE));
-        assert_eq!(hit_test(selection, Point { x: 100, y: 150 }), Some(Handle::W));
-        assert_eq!(hit_test(selection, Point { x: 200, y: 150 }), Some(Handle::Move));
+        assert_eq!(
+            hit_test(selection, Point { x: 100, y: 100 }),
+            Some(Handle::NW)
+        );
+        assert_eq!(
+            hit_test(selection, Point { x: 300, y: 200 }),
+            Some(Handle::SE)
+        );
+        assert_eq!(
+            hit_test(selection, Point { x: 100, y: 150 }),
+            Some(Handle::W)
+        );
+        assert_eq!(
+            hit_test(selection, Point { x: 200, y: 150 }),
+            Some(Handle::Move)
+        );
         assert_eq!(hit_test(selection, Point { x: 400, y: 150 }), None);
         assert_eq!(
-            hit_test(Selection { x: 0, y: 0, w: 1, h: 1 }, Point { x: 0, y: 0 }),
+            hit_test(
+                Selection {
+                    x: 0,
+                    y: 0,
+                    w: 1,
+                    h: 1
+                },
+                Point { x: 0, y: 0 }
+            ),
             None
         );
     }
@@ -1626,6 +1731,65 @@ mod tests {
         let (origin, wrap) = text_commit_box(Point { x: 0, y: 0 }, 100, 10, 6, 60, 0);
         assert_eq!(origin, Point { x: 10, y: 6 });
         assert_eq!(wrap, 50);
+    }
+
+    #[test]
+    fn an_open_text_box_presses_and_draws_the_same_handles() {
+        let mut model = model(Overlay::Screenshot);
+        model.edit_pos = Point { x: 100, y: 100 };
+        model.edit_w = 200;
+        model.edit_h = 100;
+        model.editing = true;
+        let outer = model.text_outer();
+        // The hit test and the renderer share the spots: corner handles, edge middles.
+        for (handle, x, y) in text_handles(outer) {
+            assert_eq!(model.hit_text_handle(Point { x, y }), Some(handle));
+        }
+        assert_eq!(
+            model.hit_text_handle(Point {
+                x: outer.x + 20,
+                y: outer.y
+            }),
+            None
+        );
+        // The border between the handles moves the box; the inside belongs to the editor.
+        assert!(model.in_text_border(Point {
+            x: outer.x + 20,
+            y: outer.y
+        }));
+        assert!(!model.in_text_border(Point {
+            x: model.edit_pos.x + 20,
+            y: model.edit_pos.y + 20
+        }));
+    }
+
+    #[test]
+    fn the_edit_box_edges_grab_a_resize_like_the_native_edit_control() {
+        let mut model = model(Overlay::Screenshot);
+        model.edit_pos = Point { x: 100, y: 100 };
+        model.edit_w = 200;
+        model.edit_h = 100;
+        model.editing = true;
+        // The whole band inside each edge resizes, not only the painted dots.
+        assert_eq!(
+            model.hit_edit_edge_handle(Point { x: 200, y: 102 }),
+            Some(Handle::N)
+        );
+        assert_eq!(
+            model.hit_edit_edge_handle(Point { x: 102, y: 150 }),
+            Some(Handle::W)
+        );
+        assert_eq!(
+            model.hit_edit_edge_handle(Point { x: 298, y: 198 }),
+            Some(Handle::SE)
+        );
+        // The middle of the field belongs to the editor and its caret.
+        assert_eq!(model.hit_edit_edge_handle(Point { x: 200, y: 150 }), None);
+        // The padded frame outside the field is not an edit-control edge.
+        assert_eq!(model.hit_edit_edge_handle(Point { x: 106, y: 94 }), None);
+        // Without an open editor there is no edge to grab.
+        model.editing = false;
+        assert_eq!(model.hit_edit_edge_handle(Point { x: 200, y: 102 }), None);
     }
 
     #[test]
@@ -1692,6 +1856,7 @@ mod tests {
                 width,
                 height,
                 data,
+                age_ns: 0,
             },
             Rect {
                 x: 0,
@@ -1750,7 +1915,10 @@ mod tests {
         assert!(!pending());
         assert!(publish(Outcome::Cancel));
         assert!(pending());
-        assert!(!publish(Outcome::Screen), "a second outcome must be refused");
+        assert!(
+            !publish(Outcome::Screen),
+            "a second outcome must be refused"
+        );
         assert!(matches!(take_outcome(), Some(Outcome::Cancel)));
         assert!(!pending());
         assert!(take_outcome().is_none());

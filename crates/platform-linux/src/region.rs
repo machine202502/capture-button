@@ -3,12 +3,35 @@
 //! the pieces that do have a meaning here (monitor list, save dialog, still
 //! annotations).
 
-use platform_core::types::{Frame, Rect};
 pub use platform_core::region::{Outcome, Overlay};
+use platform_core::region::{Renderer, RendererKind, Renderers};
+use platform_core::types::{Frame, Rect};
 
 /// The monitors of the X screen.
 pub fn monitor_rects() -> Vec<Rect> {
     crate::screen::monitor_rects()
+}
+
+/// The Slint overlay asks the window manager for fullscreen on Linux so the
+/// shell hides its panel and dock.
+pub fn overlay_fullscreen() -> bool {
+    true
+}
+
+/// The only overlay renderer Linux offers: the Slint window the application
+/// draws.
+static RENDERERS: [Renderer; 1] = [Renderer {
+    id: 1,
+    name: "Slint",
+    kind: RendererKind::Slint,
+}];
+
+/// The overlay renderers this platform offers.
+pub fn overlay_renderers() -> Renderers {
+    Renderers {
+        available: &RENDERERS,
+        default: 1,
+    }
 }
 
 /// The native overlay is not available; the caller falls back to Slint.
@@ -30,11 +53,17 @@ pub fn take_outcome() -> Option<Outcome> {
 
 pub fn cancel() {}
 
-/// Bakes annotation strokes into the still. The Linux renderer is Slint, so the
-/// annotated still is produced from the Slint scene; this backend has nothing
-/// to add yet.
-pub fn draw_annotations(_frame: &mut Frame, _shapes: &[platform_core::region::Shape], _offset: platform_core::region::Point) -> bool {
-    false
+/// Bakes annotation strokes and text into the still.
+///
+/// The Linux overlay is the Slint one, so a still saved from it has no native
+/// drawing pass: [`crate::annotate`] paints the same geometry the Slint scene
+/// draws into the cropped frame.
+pub fn draw_annotations(
+    frame: &mut Frame,
+    shapes: &[platform_core::region::Shape],
+    offset: platform_core::region::Point,
+) -> bool {
+    crate::annotate::bake(frame, shapes, offset)
 }
 
 /// A save dialog through zenity, the same helper the folder picker uses.
@@ -65,4 +94,20 @@ pub fn suggested_image_path() -> String {
     )
     .map(|path| path.display().to_string())
     .unwrap_or_else(|_| "Image.png".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_offers_only_the_slint_renderer_and_asks_for_fullscreen() {
+        let renderers = overlay_renderers();
+        assert_eq!(renderers.available.len(), 1);
+        assert_eq!(renderers.available[0].id, 1);
+        assert_eq!(renderers.available[0].name, "Slint");
+        assert_eq!(renderers.available[0].kind, RendererKind::Slint);
+        assert_eq!(renderers.default, 1);
+        assert!(overlay_fullscreen());
+    }
 }

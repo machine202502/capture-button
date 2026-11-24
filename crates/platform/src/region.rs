@@ -1,6 +1,6 @@
 //! The area-selection overlay as the application sees it.
 //!
-//! Two renderers draw the same [`Model`]: the native GDI overlay in the Windows
+//! Two renderers draw the same [`Model`]: the native overlay in the platform
 //! backend, and the Slint overlay in the app. This module is the one API the app
 //! uses for both. It forwards the native window's operations to the backend,
 //! carries the neutral model and its vocabulary, and owns the outcome channel
@@ -15,11 +15,12 @@
 use platform_core::types::Frame;
 use std::path::PathBuf;
 
-pub use crate::backend::region::{monitor_rects, open};
+pub use crate::backend::region::{monitor_rects, open, overlay_fullscreen};
 
 pub use platform_core::region::{
-    caption, handles, icon, role_enabled, Action, Button, FontSeed, Key, Metrics, Model, Outcome,
-    Overlay, Point, Role, Selection, Shape, ShapeKind, Tool,
+    caption, handles, icon, role_enabled, text_handles, Action, Button, Drag, FontSeed, Handle,
+    Key, Metrics, Model, Outcome, Overlay, Point, Renderer, RendererKind, Renderers, Role,
+    Selection, Shape, ShapeKind, Tool,
 };
 
 /// Whether the native overlay window exists.
@@ -93,7 +94,7 @@ pub fn pending() -> bool {
 
 /// Draws annotations onto an already cropped frame, moving them by `offset`.
 ///
-/// The Windows overlay owns the annotation drawing; every renderer reuses it so
+/// The native overlay owns the annotation drawing; every renderer reuses it so
 /// a saved picture is the same whichever overlay produced it.
 pub fn bake_annotations(frame: &mut Frame, shapes: &[Shape], offset: Point) {
     crate::backend::region::draw_annotations(frame, shapes, offset);
@@ -126,70 +127,41 @@ pub fn render_still(model: &Model) -> Option<Frame> {
     Some(frame)
 }
 
-/// A renderer that can draw the area overlay.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OverlayRenderer {
-    /// The native overlay the application always had (Windows only).
-    Gdi,
-    /// The cross-platform Slint overlay.
-    Slint,
+/// The renderers this build offers, in menu order, and the platform default.
+pub fn overlay_renderers() -> Renderers {
+    crate::backend::region::overlay_renderers()
 }
 
-impl OverlayRenderer {
-    /// `1` is the Slint renderer, `0` the native one. A value this build cannot
-    /// draw falls back to the platform default, so a settings file copied from
-    /// another OS still opens an overlay.
-    pub fn from_setting(value: u32) -> Self {
-        let wanted = if value == 1 { Self::Slint } else { Self::Gdi };
-        if overlay_renderers().contains(&wanted) {
-            wanted
-        } else {
-            default_overlay_renderer()
-        }
-    }
-
-    pub fn to_setting(self) -> u32 {
-        match self {
-            Self::Gdi => 0,
-            Self::Slint => 1,
-        }
-    }
-
-    /// The name shown in the settings picker.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Gdi => "GDI",
-            Self::Slint => "Slint",
-        }
-    }
+/// The renderer a fresh profile starts with.
+pub fn default_renderer() -> Renderer {
+    let renderers = overlay_renderers();
+    renderers
+        .available
+        .iter()
+        .find(|renderer| renderer.id == renderers.default)
+        .or_else(|| renderers.available.first())
+        .copied()
+        .expect("a platform offers at least one overlay renderer")
 }
 
-/// The renderers this build offers, in menu order.
+/// The renderer a stored settings value names.
 ///
-/// Windows ships both; every other platform has only the Slint overlay until a
-/// native one is written.
-pub fn overlay_renderers() -> Vec<OverlayRenderer> {
-    #[cfg(target_os = "windows")]
-    {
-        vec![OverlayRenderer::Gdi, OverlayRenderer::Slint]
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        vec![OverlayRenderer::Slint]
-    }
-}
-
-/// The renderer a fresh profile starts with: the native overlay on Windows,
-/// the Slint one everywhere else.
-pub fn default_overlay_renderer() -> OverlayRenderer {
-    #[cfg(target_os = "windows")]
-    {
-        OverlayRenderer::Gdi
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        OverlayRenderer::Slint
-    }
+/// The value is a renderer [`id`](Renderer::id), so `0` stays the native
+/// overlay of the platform and `1` the Slint one. An id this build does not
+/// offer falls back to the platform default, which keeps a settings file copied
+/// from another OS usable.
+pub fn renderer_by_setting(value: u32) -> Renderer {
+    let renderers = overlay_renderers();
+    u8::try_from(value)
+        .ok()
+        .and_then(|id| {
+            renderers
+                .available
+                .iter()
+                .find(|renderer| renderer.id == id)
+        })
+        .copied()
+        .unwrap_or_else(default_renderer)
 }
 
 #[cfg(test)]
@@ -198,18 +170,41 @@ mod tests {
 
     #[test]
     fn the_default_renderer_is_available_here() {
-        let default = default_overlay_renderer();
-        assert!(overlay_renderers().contains(&default));
-        assert_eq!(OverlayRenderer::from_setting(default.to_setting()), default);
+        let default = default_renderer();
+        let offered = overlay_renderers()
+            .available
+            .iter()
+            .any(|renderer| renderer.id == default.id);
+        assert!(offered, "the default renderer is not in the list");
+        assert_eq!(renderer_by_setting(u32::from(default.id)).id, default.id);
     }
 
     #[test]
     fn the_slint_setting_maps_to_slint_where_it_exists() {
-        assert_eq!(OverlayRenderer::from_setting(1), OverlayRenderer::Slint);
-        assert_eq!(OverlayRenderer::Slint.to_setting(), 1);
-        assert_eq!(OverlayRenderer::Gdi.to_setting(), 0);
-        // A value for a renderer this build does not have still resolves.
-        let unknown = OverlayRenderer::from_setting(99);
-        assert!(overlay_renderers().contains(&unknown));
+        let slint = renderer_by_setting(1);
+        assert_eq!(slint.id, 1);
+        assert_eq!(slint.name, "Slint");
+        assert_eq!(slint.kind, RendererKind::Slint);
+    }
+
+    #[test]
+    fn an_unknown_setting_falls_back_to_the_default() {
+        let default = default_renderer();
+        assert_eq!(renderer_by_setting(99).id, default.id);
+        assert_eq!(renderer_by_setting(u32::MAX).id, default.id);
+    }
+
+    #[test]
+    fn a_chosen_setting_names_an_offered_renderer() {
+        for value in [0, 1, 99] {
+            let chosen = renderer_by_setting(value);
+            assert!(
+                overlay_renderers()
+                    .available
+                    .iter()
+                    .any(|renderer| renderer.id == chosen.id),
+                "setting {value} resolved to a renderer the platform does not offer"
+            );
+        }
     }
 }
