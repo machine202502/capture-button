@@ -89,11 +89,9 @@ pub fn check(on_state: StateCallback) {
                 }
                 Err(error) => return Err(error.to_string()),
             };
-            // Velopack's Linux locator calls every AppImage portable, because there
-            // is no separate install root: the AppImage is both the application and
-            // the thing an update replaces. That is still a self-updating install,
-            // so the "portable builds cannot update" rule is Windows-only.
-            if manager.get_is_portable() && !cfg!(target_os = "linux") {
+            // A portable Windows build has no install root for Velopack to
+            // replace, so it cannot update itself.
+            if manager.get_is_portable() {
                 return Ok(Checked::Unsupported);
             }
             match manager

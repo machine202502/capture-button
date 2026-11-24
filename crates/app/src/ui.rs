@@ -8,7 +8,7 @@
 use crate::{media, AudioSettings, CaptureSettings, ProfileRef, Settings};
 use media::{Format, VideoSettings};
 use platform::i18n::{tr, trf};
-use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding, HotkeyChoice};
+use platform::shell::{hotkey_defs, HotkeyAction, HotkeyBinding};
 use platform::UpdateState;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -327,8 +327,6 @@ pub enum UiRequest {
     },
     /// A hotkey row changed in the window; the application persists it.
     HotkeysChanged,
-    /// The user asked the desktop for a new combination of `action`.
-    HotkeyChange(HotkeyAction),
     CloseRequested,
 }
 
@@ -601,8 +599,6 @@ fn sync_labels(ui: &MainWindow) {
     labels.set_stop_recording(tr("Stop recording").into());
     labels.set_not_set(tr("Not set").into());
     labels.set_press_keys(tr("Press keys…").into());
-    labels.set_set_hotkey(tr("Set").into());
-    labels.set_set_in_system_dialog(tr("Set in system dialog").into());
     labels.set_start_with_windows(tr("Start with Windows").into());
     labels.set_start_minimized(tr("Start minimized with Windows").into());
     labels.set_hide_active(tr("Hide the window while capturing").into());
@@ -724,13 +720,6 @@ fn bind(ui: &MainWindow, controls: &Controls) {
         post_request(UiRequest::HotkeysChanged);
     });
 
-    ui.on_hotkey_change(move |action| {
-        let Some(action) = HotkeyAction::from_index(action.max(0) as usize) else {
-            return;
-        };
-        post_request(UiRequest::HotkeyChange(action));
-    });
-
     let history = controls.clone();
     ui.on_history_click(move |id| {
         post_request(UiRequest::Command {
@@ -841,8 +830,6 @@ fn sync(ui: &MainWindow, model: &Model) {
         model,
     ))));
     ui.set_hotkeys_supported(model.hotkeys_supported);
-    ui.set_hotkeys_dialog(model.hotkeys_choice == HotkeyChoice::SystemDialog);
-    ui.set_hotkeys_pending(model.hotkeys_pending);
     ui.set_monitors_supported(model.monitors_supported);
     ui.set_video_monitor(model.monitor_index as i32);
     ui.set_status(model.status.clone().into());
@@ -1055,9 +1042,7 @@ struct Model {
     monitors: Vec<platform::screen::MonitorInfo>,
     monitors_supported: bool,
     hotkeys_supported: bool,
-    hotkeys_choice: HotkeyChoice,
     hotkeys: Vec<HotkeyBinding>,
-    hotkeys_pending: bool,
     monitor_index: usize,
     history: Vec<String>,
     history_ack: Option<i32>,
@@ -1496,7 +1481,7 @@ impl Controls {
             .unwrap_or_default()
     }
 
-    /// Adopts a set the backend reported (a system dialog's answer).
+    /// Adopts a set of hotkey bindings.
     pub fn set_hotkeys(&self, bindings: &[HotkeyBinding]) {
         self.update(|model| {
             for binding in bindings {
@@ -1512,22 +1497,8 @@ impl Controls {
         });
     }
 
-    /// Shows that the desktop is asking for the combinations right now.
-    pub fn set_hotkeys_pending(&self, pending: bool) {
-        self.update(|model| model.hotkeys_pending = pending);
-    }
-
     pub fn set_hotkeys_supported(&self, supported: bool) {
         self.update(|model| model.hotkeys_supported = supported);
-    }
-
-    /// Switches the window between capturing a press and showing the desktop's
-    /// dialog, after the backend changed the choice.
-    pub fn set_hotkey_choice(&self, choice: HotkeyChoice) {
-        self.update(|model| {
-            model.hotkeys_choice = choice;
-            model.hotkeys_pending = false;
-        });
     }
 
     pub fn refresh_formats(&self) {}
@@ -1544,7 +1515,6 @@ impl Controls {
             model.devices = std::array::from_fn(|_| devices.clone());
             model.system_devices = platform::audio::system_sources();
             model.hotkeys_supported = platform::shell::hotkeys_supported();
-            model.hotkeys_choice = platform::shell::hotkey_choice();
             model.hotkeys = settings.hotkeys.clone();
             model.monitors_supported = platform::screen::monitors_supported();
             model.monitors = platform::screen::monitors();

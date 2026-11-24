@@ -27,7 +27,8 @@ fn microphone_name(options: &RecordOptions) -> Option<String> {
     }
 }
 
-/// The sink `parec` should record; `None` follows the current default output.
+/// The system-audio endpoint to record; `None` follows the current default
+/// output.
 fn system_device_name(options: &RecordOptions) -> Option<&str> {
     let id = options.profile.audio.system_device.as_str();
     if id.eq_ignore_ascii_case("auto") {
@@ -105,7 +106,7 @@ fn record(
         Ok(session) => {
             let partial = session.scratch.clone();
             // The caller gives up after the eight-second start timeout and
-            // cancels a take whose first frame never arrived (a portal pick can
+            // cancels a take whose first frame never arrived (a source pick can
             // sit in `prepare` much longer). Such a take must not be published:
             // it would be a one-frame file the user reads as broken.
             if stop.load(Ordering::SeqCst) {
@@ -638,9 +639,9 @@ impl Session {
                 Err(error)
             }
             Err(_) => {
-                // The worker is still inside `prepare` — on Wayland that can be a
-                // portal pick waiting for the user. Joining it here froze the
-                // window until the picker closed. Report the failure at once and
+                // The worker is still inside `prepare` — that can be a source
+                // pick waiting for the user. Joining it here froze the window
+                // until the picker closed. Report the failure at once and
                 // detach the worker: it deletes its scratch as soon as it sees
                 // the stop flag and publishes nothing.
                 stop.store(true, Ordering::SeqCst);

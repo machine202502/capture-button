@@ -107,8 +107,6 @@ export global Labels {
     in property <string> default_folder: "";
     in property <string> change: "";
     in property <string> reset: "";
-    in property <string> set_hotkey: "";
-    in property <string> set_in_system_dialog: "";
     in property <string> close: "";
     in property <string> about_version: "";
     in property <string> about_note: "";
@@ -488,10 +486,6 @@ export component MainWindow inherits Window {
     in property <[HotkeyRow]> hotkey-rows: [];
     /// Which row is capturing a key press; -1 when none is.
     in-out property <int> hotkey-capture: -1;
-    /// The desktop owns the combinations and asks in its own dialog.
-    in property <bool> hotkeys-dialog: false;
-    /// The system dialog is open right now.
-    in property <bool> hotkeys-pending: false;
     in property <bool> hotkeys-supported: false;
     in-out property <[string]> language-names: ["System"];
     in property <[string]> region-renderer-names: ["GDI"];
@@ -536,7 +530,6 @@ export component MainWindow inherits Window {
     callback history-click(int);
     callback hotkey-key(int, string, bool, bool, bool, bool);
     callback hotkey-clear(int);
-    callback hotkey-change(int);
     callback window-closed();
 
     property <bool> can-tab: root.idle || root.recording;
@@ -977,21 +970,20 @@ export component MainWindow inherits Window {
                                 border-radius: 8px * ui-scale;
                                 background: Palette.bg;
                                 border-width: 1px;
-                                border-color: (row-capture-ta.has-hover && !root.hotkeys-dialog) ? Palette.accent : Palette.line;
+                                border-color: row-capture-ta.has-hover ? Palette.accent : Palette.line;
                                 clip: true;
                                 Text {
                                     x: 10px * ui-scale;
                                     y: 0px;
                                     width: parent.width - 46px * ui-scale;
                                     height: parent.height;
-                                    text: (!root.hotkeys-dialog && root.hotkey-capture == row.action) ? Labels.press_keys : (row.value == "" ? Labels.not_set : row.value);
-                                    color: ((!root.hotkeys-dialog && root.hotkey-capture == row.action) || row.value == "") ? Palette.muted : Palette.ink;
+                                    text: (root.hotkey-capture == row.action) ? Labels.press_keys : (row.value == "" ? Labels.not_set : row.value);
+                                    color: ((root.hotkey-capture == row.action) || row.value == "") ? Palette.muted : Palette.ink;
                                     font-size: 12px * ui-scale;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                                 row-capture-ta := TouchArea {
-                                    enabled: !root.hotkeys-dialog && !root.hotkeys-pending;
                                     clicked => { root.hotkey-capture = row.action; keys.focus(); }
                                 }
                                 Rectangle {
@@ -1001,7 +993,7 @@ export component MainWindow inherits Window {
                                     height: 24px * ui-scale;
                                     border-radius: 7px * ui-scale;
                                     background: row-clear-ta.enabled && row-clear-ta.has-hover ? Palette.hover : transparent;
-                                    visible: root.hotkeys-dialog || row.value != "";
+                                    visible: row.value != "";
                                     Path {
                                         x: 6px * ui-scale;
                                         y: 6px * ui-scale;
@@ -1016,44 +1008,14 @@ export component MainWindow inherits Window {
                                         fill: transparent;
                                     }
                                     row-clear-ta := TouchArea {
-                                        enabled: row.value != "" && !root.hotkeys-pending;
+                                        enabled: row.value != "";
                                         mouse-cursor: pointer;
                                         clicked => { root.hotkey-clear(row.action); }
                                     }
                                 }
                             }
-                            if root.hotkeys-dialog : Rectangle {
-                                // The desktop owns the combination: this asks it
-                                // for a new one instead of capturing a press.
-                                width: 66px * ui-scale;
-                                height: 30px * ui-scale;
-                                border-radius: 8px * ui-scale;
-                                background: row-change-ta.has-hover ? Palette.hover : Palette.card;
-                                border-width: 1px;
-                                border-color: Palette.line;
-                                Text {
-                                    text: row.value == "" ? Labels.set_hotkey : Labels.change;
-                                    color: root.hotkeys-pending ? Palette.disabled : Palette.ink;
-                                    font-size: 11px * ui-scale;
-                                    font-weight: 600;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-                                row-change-ta := TouchArea {
-                                    enabled: row.value != "" && !root.hotkeys-pending;
-                                    mouse-cursor: pointer;
-                                    clicked => { root.hotkey-change(row.action); }
-                                }
-                            }
                         }
                             }
-                        Text {
-                            text: Labels.set_in_system_dialog;
-                            color: Palette.muted;
-                            font-size: 10px * ui-scale;
-                            wrap: word-wrap;
-                            visible: root.hotkeys-pending;
-                        }
                     }
 
                     Card {

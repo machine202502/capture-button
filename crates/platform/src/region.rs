@@ -148,8 +148,8 @@ pub fn default_renderer() -> Renderer {
 ///
 /// The value is a renderer [`id`](Renderer::id), so `0` stays the native
 /// overlay of the platform and `1` the Slint one. An id this build does not
-/// offer falls back to the platform default, which keeps a settings file copied
-/// from another OS usable.
+/// offer falls back to the platform default, which keeps an older settings file
+/// usable.
 pub fn renderer_by_setting(value: u32) -> Renderer {
     let renderers = overlay_renderers();
     u8::try_from(value)

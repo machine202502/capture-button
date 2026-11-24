@@ -1103,8 +1103,8 @@ fn settle(ui: &OverlayWindow, state: &Rc<RefCell<State>>) {
             if let (Some(ui), Some(shared)) = (window.upgrade(), shared.upgrade()) {
                 refit(&ui, &shared);
                 if platform::region::overlay_fullscreen() {
-                    // Recorded because the Wayland panel is only covered while
-                    // the compositor agrees that the window is fullscreen.
+                    // Logged because a fullscreen window covers the task bar
+                    // only while the system agrees that it is fullscreen.
                     platform::logging::info(format!(
                         "area overlay: fullscreen {}",
                         ui.window().is_fullscreen()
@@ -1143,10 +1143,9 @@ fn create(
         place(&ui, &current.model);
         install_frame(&ui, &current.model);
     }
-    // Asking for fullscreen before the surface is mapped is what the Wayland
-    // protocol expects (`xdg_toplevel.set_fullscreen` is a pre-map request);
-    // asking after `show()` leaves the shell's panel and dock above the
-    // overlay on mutter. Windows does not ask for fullscreen at all.
+    // Fullscreen is requested before the window is mapped when the backend asks
+    // for it, so the shell's task bar never sits above the overlay. Windows
+    // uses a topmost window instead and does not ask for fullscreen at all.
     if platform::region::overlay_fullscreen() {
         ui.window().set_fullscreen(true);
     }

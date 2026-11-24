@@ -24,61 +24,56 @@ The application depends on one platform crate, `platform`. Under it:
   `frame`, `geom`, translated catalogs, the palette, local time, logging, output
   folders and file names, the capture-source rules, the tray menu model, and the
   whole area-selection model (layout, hit-testing, annotation shapes, keys).
-  Nothing here calls the operating system and nothing here mentions Win32.
+  Nothing here calls the operating system.
 - `crates/platform` — the crate the app uses. It composes `platform-core` with
-  the selected backend and holds the modules that need both: `camera` (nokhwa),
+  the backend and holds the modules that need both: `camera` (nokhwa),
   `audio` (cpal), `update` (Velopack), the `i18n`/`logging` initialisation, and
   the `screen`/`region` glue.
-- `crates/platform-windows` — the Win32 backend: host window and message loop,
-  tray, timers, Windows Graphics Capture, registry, dialogs, clipboard, sounds,
+- `crates/platform-windows` — the backend: host window and message loop,
+  tray, timers, screen capture, registry, dialogs, clipboard, sounds,
   devices, and the native GDI area overlay.
-- `crates/platform-linux` — not written yet. Its contract is the same module set
-  as `platform-windows`; `platform-core` and `app` must not change when it is
-  added. Capabilities that do not exist on a platform (window lists under
-  Wayland, a tray on plain GNOME, global hotkeys) must report "unsupported"
-  instead of faking a result, and the app must degrade gracefully.
+
+The application is Windows-only; `platform-core` and `app` must not gain backend
+types or calls.
 
 ### Platform code never leaks into `platform-core`
 
 `platform-core` stays OS-neutral. Forbidden there:
 
-- `cfg(target_os = …)`, `cfg(windows)`, `cfg(unix)` and any other platform gate;
-- OS vocabulary: X11/Xlib/XGrabKey/keysym/EWMH, Win32/HWND/HICON/WASAPI;
-- conversions into a platform representation, such as computing an X11 keysym
-  from a key.
+- any compile-time backend selection;
+- backend vocabulary: handles, API names, constants;
+- conversions into a platform representation.
 
 Keep the shared vocabulary and policy in `platform-core` (for example `Key`)
-and let the backend convert it to its own representation (for example
-`platform-linux` mapping a `Key` to a keysym before `XGrabKey`). A platform
-type in the core signature is the same leak even when the body is trivial.
+and let the backend convert it to its own representation. A platform type in the
+core signature is the same leak even when the body is trivial.
 
 Lead agents must state this rule in every task brief and check the returned
 diff for violations before accepting it; a delegated agent working as a lead
 for others passes the rule down the same way.
 
 Rule of thumb: what the user sees or does is decided in `platform-core`; what
-talks to the OS is `platform-<os>`; anything that needs both is glue in
+talks to the OS is `platform-windows`; anything that needs both is glue in
 `platform`.
 
 ### Area overlay renderers
 
 The overlay policy is `platform_core::region::Model`; a renderer only draws it
-and feeds pointer/key events back. Windows has two:
+and feeds pointer/key events back. The build has two:
 
 - `platform-windows/src/region.rs` — the native GDI overlay, the default. The
   frozen frame and the dim stay plain GDI (one fast blit); the chrome and the
   annotation strokes go through `platform-windows/src/gdiplus.rs`, which draws
   them anti-aliased so they match the Slint overlay;
 - `crates/app/src/overlay.rs` + `crates/app/ui/overlay.slint` — the Slint
-  overlay, which is the intended renderer for every other OS.
+  overlay, which renders the same policy with Slint.
 
-Settings → **Performance and overlay** → **Overlay renderer** selects it. Windows
-offers both and defaults to GDI; every other platform offers only Slint for now.
-The stored value is `region_renderer` in the settings store (`0` = GDI,
-`1` = Slint); a saved value naming a renderer the build does not have falls back
-to the platform default. The GDI path must keep working when the Slint one is
-selected, and the Slint path must fall back to GDI (with a log line) if it
-cannot start.
+Settings → **Performance and overlay** → **Overlay renderer** selects it. The
+build offers both and defaults to GDI. The stored value is `region_renderer` in
+the settings store (`0` = GDI, `1` = Slint); a saved value naming a renderer the
+build does not have falls back to the platform default. The GDI path must keep
+working when the Slint one is selected, and the Slint path must fall back to GDI
+(with a log line) if it cannot start.
 
 ## Snapshots and e2e
 

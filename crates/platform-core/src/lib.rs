@@ -1,16 +1,15 @@
 //! OS-neutral platform vocabulary and policy.
 //!
-//! Everything here compiles and runs on every supported OS: value types, the
-//! geometry of the interface, translated strings, the palette, the way a
-//! capture source is chosen, the region-selection state machine. Nothing in this
-//! crate calls the operating system.
+//! Everything here is free of OS calls: value types, the geometry of the
+//! interface, translated strings, the palette, the way a capture source is
+//! chosen, the region-selection state machine. Nothing in this crate calls the
+//! operating system.
 //!
 //! The crates above it:
-//! - `platform-<os>` implements the OS calls and the windows;
-//! - `platform` composes this crate with the selected `platform-<os>` backend and
-//!   is the only platform crate the application depends on.
+//! - `platform-windows` implements the OS calls and the windows;
+//! - `platform` composes this crate with the backend and is the only platform
+//!   crate the application depends on.
 
-pub mod camera;
 pub mod frame;
 pub mod geom;
 pub mod i18n;

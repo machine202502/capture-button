@@ -83,18 +83,6 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           fill_asset '-setup.msi' setup
-          # The Linux files are optional: a release published before the Linux
-          # job existed must still deploy the page, just without their hashes.
-          if [ -n "$(asset '-linux-x64.AppImage' name)" ]; then
-            fill_asset '-linux-x64.AppImage' appimage
-          else
-            echo "Release $tag has no Linux AppImage; leaving its hash empty."
-          fi
-          if [ -n "$(asset '-linux-x64.deb' name)" ]; then
-            fill_asset '-linux-x64.deb' deb
-          else
-            echo "Release $tag has no Linux deb; leaving its hash empty."
-          fi
 
           mkdir -p "$GITHUB_WORKSPACE/site/updates"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
@@ -103,13 +91,6 @@ jobs:
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             --pattern '*.nupkg' \
             --dir "$GITHUB_WORKSPACE/site/updates" --clobber
-          # The Linux feed goes to the same URL; the app asks for the channel
-          # it was packaged with. It is optional because a release published
-          # before the Linux job existed must still deploy the Windows site.
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'releases.linux.json' \
-            --dir "$GITHUB_WORKSPACE/site/updates" --clobber \
-            || echo "Release $tag has no releases.linux.json; deploying without a Linux feed."
 
       - name: Fill build hash into the site
         run: |
@@ -132,10 +113,6 @@ jobs:
               -e 's/@@HASH_ZIP@@/${{ steps.release.outputs.zip_hash }}/g' \
               -e 's/@@SIZE_SETUP@@/${{ steps.release.outputs.setup_size }}/g' \
               -e 's/@@SIZE_ZIP@@/${{ steps.release.outputs.zip_size }}/g' \
-              -e 's/@@HASH_APPIMAGE@@/${{ steps.release.outputs.appimage_hash }}/g' \
-              -e 's/@@SIZE_APPIMAGE@@/${{ steps.release.outputs.appimage_size }}/g' \
-              -e 's/@@HASH_DEB@@/${{ steps.release.outputs.deb_hash }}/g' \
-              -e 's/@@SIZE_DEB@@/${{ steps.release.outputs.deb_size }}/g' \
               "$page"
           done
 

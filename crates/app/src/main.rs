@@ -16,9 +16,9 @@ use media::{Format, Rect};
 use platform::geom::{Activity, TrayClick};
 use platform::i18n::{tr, trf};
 use platform::shell::{
-    HotkeyAction, HotkeyBinding, HotkeyChoice, HotkeyEvent, ShellEvent, TrayBadge, TrayEntry,
-    TrayGlyph, ID_TRAY_AREA, ID_TRAY_AUDIO, ID_TRAY_EXIT, ID_TRAY_OPEN, ID_TRAY_SHOT, ID_TRAY_STOP,
-    ID_TRAY_VIDEO, LEVEL_TIMER, TIMER_ID,
+    HotkeyAction, HotkeyBinding, ShellEvent, TrayBadge, TrayEntry, TrayGlyph, ID_TRAY_AREA,
+    ID_TRAY_AUDIO, ID_TRAY_EXIT, ID_TRAY_OPEN, ID_TRAY_SHOT, ID_TRAY_STOP, ID_TRAY_VIDEO,
+    LEVEL_TIMER, TIMER_ID,
 };
 pub(crate) use settings::{CaptureSettings, ProfileRef, Settings};
 use std::path::PathBuf;
@@ -455,7 +455,7 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let settings = Settings::load(platform::shell::hotkey_choice());
+        let settings = Settings::load();
         media::set_output_folders(&settings.folders);
         let gain_warned = std::array::from_fn(|slot| {
             let audio = ProfileRef::ALL[slot].audio(&settings);
@@ -578,7 +578,6 @@ impl App {
             ShellEvent::Activate => self.show_window(),
             ShellEvent::Close => self.on_close(),
             ShellEvent::Hotkey(action) => self.on_hotkey(action),
-            ShellEvent::Hotkeys(event) => self.on_hotkeys(event),
             ShellEvent::Quit => {}
         }
     }
@@ -588,47 +587,6 @@ impl App {
         match action {
             HotkeyAction::Area => self.command(ID_TRAY_AREA, 0),
             HotkeyAction::Stop => self.stop_capture(),
-        }
-    }
-
-    /// Takes the answer of a hotkey request the desktop answered in its dialog.
-    ///
-    /// The settings are updated only with what the desktop reported, except
-    /// that a cancelled request leaves the previous set in place.
-    fn on_hotkeys(&mut self, event: HotkeyEvent) {
-        match event {
-            HotkeyEvent::Pending => {
-                platform::logging::info("hotkeys: waiting for the system dialog");
-                self.controls.set_hotkeys_pending(true);
-            }
-            HotkeyEvent::Applied(bindings) => {
-                platform::logging::info("hotkeys: the desktop applied the set");
-                self.controls.set_hotkeys_pending(false);
-                self.settings.set_hotkeys(&bindings);
-                self.settings.hotkeys_configured = true;
-                self.settings.save();
-                self.controls.set_hotkeys(&bindings);
-                self.log_hotkeys();
-            }
-            HotkeyEvent::Failed { message, bindings } => {
-                self.controls.set_hotkeys_pending(false);
-                self.settings.set_hotkeys(&bindings);
-                self.settings.save();
-                self.controls.set_hotkeys(&bindings);
-                platform::logging::info(format!("hotkeys: {message}"));
-                self.controls.set_text(ID_STATUS, &message);
-                self.log_hotkeys();
-            }
-            HotkeyEvent::Unavailable => {
-                platform::logging::info(
-                    "hotkeys: the desktop portal is not available; using the fallback",
-                );
-                self.controls
-                    .set_hotkey_choice(platform::shell::hotkey_choice());
-                self.controls
-                    .set_hotkeys_supported(platform::shell::hotkeys_supported());
-                self.apply_hotkeys();
-            }
         }
     }
 
@@ -1094,12 +1052,6 @@ impl App {
     }
 
     /// Rebuilds the global key bindings from the saved settings.
-    ///
-    /// With [`HotkeyChoice::SystemDialog`] the backend asks the desktop, and the
-    /// answer arrives later as a `ShellEvent::Hotkeys`; on Wayland that dialog
-    /// is the only path. The fallback grabs the keys on an X11 connection, and
-    /// without one the capability check keeps the Settings section hidden and
-    /// this returns early.
     fn apply_hotkeys(&mut self) {
         if !platform::shell::hotkeys_supported() {
             return;
@@ -1112,61 +1064,24 @@ impl App {
     }
 
     /// The set to hand the backend.
-    ///
-    /// A session where the desktop owns the combinations opens its dialog once,
-    /// and an empty set would give it nothing to offer. Until that dialog has
-    /// been answered, an unset row is proposed with the table's default
-    /// combination; after it, an empty row is a deliberate "no hotkey" and stays
-    /// empty.
     fn hotkey_set(&self) -> Vec<HotkeyBinding> {
-        let propose = platform::shell::hotkey_choice() == HotkeyChoice::SystemDialog
-            && !self.settings.hotkeys_configured;
-        self.settings
-            .hotkeys
-            .iter()
-            .map(|binding| {
-                if binding.is_set() || !propose {
-                    binding.clone()
-                } else {
-                    HotkeyBinding {
-                        action: binding.action,
-                        combination: binding.action.def().default_trigger.to_string(),
-                    }
-                }
-            })
-            .collect()
-    }
-
-    /// Asks the desktop for a new combination of `action`, keeping the rest of
-    /// the set. The answer arrives as a `ShellEvent::Hotkeys`.
-    fn change_hotkey(&mut self, action: HotkeyAction) {
-        if !platform::shell::hotkeys_supported() {
-            return;
-        }
-        self.log_hotkeys();
-        let mut bindings = self.hotkey_set();
-        // The row the user asked about has to be in the set for the desktop to
-        // ask again; a cleared row is proposed with its default combination.
-        if let Some(binding) = bindings.iter_mut().find(|binding| binding.action == action) {
-            if !binding.is_set() {
-                binding.combination = action.def().default_trigger.to_string();
-            }
-        }
-        if let Err(error) = platform::shell::change_hotkeys(action, &bindings) {
-            platform::logging::warn(format!("hotkeys: {error}"));
-            self.controls.set_text(ID_STATUS, &error);
-        }
+        self.settings.hotkeys.clone()
     }
 
     fn log_hotkeys(&self) {
         let saved = platform::shell::hotkey_defs()
             .iter()
-            .map(|def| format!("{}={:?}", def.id, self.settings.hotkey(def.action)))
+            .map(|def| {
+                format!(
+                    "{}={:?}",
+                    def.settings_key,
+                    self.settings.hotkey(def.action)
+                )
+            })
             .collect::<Vec<_>>()
             .join(" ");
         platform::logging::info(format!(
-            "hotkeys: {:?} supported={} {saved}",
-            platform::shell::hotkey_choice(),
+            "hotkeys: supported={} {saved}",
             platform::shell::hotkeys_supported()
         ));
     }
@@ -1884,11 +1799,11 @@ impl App {
     fn error(&self, text: &str) {
         platform::logging::error(text);
         self.controls.set_text(ID_STATUS, text);
-        // The dialog blocks the thread it is shown from (`zenity` on Linux waits
-        // until the user closes it, and a hidden window offers nothing to
-        // close). Reporting from the loop would freeze the capture panel while
-        // the dialog is up, so it runs beside the loop and the state the caller
-        // has already restored stays live.
+        // The dialog blocks the thread it is shown from (it waits until the user
+        // closes it, and a hidden window offers nothing to close). Reporting
+        // from the loop would freeze the capture panel while the dialog is up,
+        // so it runs beside the loop and the state the caller has already
+        // restored stays live.
         let text = text.to_string();
         std::thread::Builder::new()
             .name("CaptureButton-error".into())
@@ -1995,10 +1910,6 @@ impl App {
                 ui::UiRequest::HotkeysChanged => {
                     self.read_ui(true);
                     self.apply_hotkeys();
-                }
-                ui::UiRequest::HotkeyChange(action) => {
-                    self.read_ui(true);
-                    self.change_hotkey(action);
                 }
                 ui::UiRequest::CloseRequested => {
                     if self.settings.close_tray {
@@ -2181,7 +2092,7 @@ fn main() {
     if !platform::shell::init() {
         return;
     }
-    platform::i18n::init(&Settings::load(platform::shell::hotkey_choice()).ui_language);
+    platform::i18n::init(&Settings::load().ui_language);
     platform::logging::init();
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

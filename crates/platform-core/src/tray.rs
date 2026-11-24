@@ -1,8 +1,7 @@
-//! The tray menu model shared by every backend.
+//! The tray menu model.
 //!
-//! A backend turns these into its native menu: the host pops up an owner-drawn
-//! popup, a Linux backend builds a StatusNotifierItem. The entries, glyphs and
-//! badges — and therefore what the user sees — are decided here.
+//! The Windows host turns these into its owner-drawn popup. The entries,
+//! glyphs and badges — and therefore what the user sees — are decided here.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TrayBadge {
@@ -45,8 +44,8 @@ pub enum PaintEvent {
 ///
 /// Adding an action means adding a variant here, one [`HotkeyDef`] row in
 /// [`HOTKEY_DEFS`], and a branch in the application's handler for the action.
-/// Everything else — the settings key, the portal id, the UI row, the platform
-/// binding — is read from the table.
+/// Everything else — the settings key, the UI row, the platform binding — is
+/// read from the table.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum HotkeyAction {
     /// Start area selection, exactly like the tray "Select area" item.
@@ -59,35 +58,23 @@ pub enum HotkeyAction {
 #[derive(Clone, Copy, Debug)]
 pub struct HotkeyDef {
     pub action: HotkeyAction,
-    /// The id the desktop portal's `GlobalShortcuts` API knows this action by.
-    pub id: &'static str,
     /// The key this action's combination is stored under in the settings store.
     pub settings_key: &'static str,
-    /// The English source string of the row label (see `i18n::tr`). It is also
-    /// the description a system dialog shows for the action.
+    /// The English source string of the row label (see `i18n::tr`).
     pub label_key: &'static str,
-    /// The combination proposed to a desktop that asks the user for the
-    /// combinations itself, in the XDG shortcuts syntax. Only a proposal: the
-    /// user confirms or replaces it in the desktop's dialog, and an empty value
-    /// proposes nothing.
-    pub default_trigger: &'static str,
 }
 
 /// The hotkey actions, in the order the settings window lists them.
 pub const HOTKEY_DEFS: [HotkeyDef; 2] = [
     HotkeyDef {
         action: HotkeyAction::Area,
-        id: "area",
         settings_key: "hotkey_area",
         label_key: "Select area",
-        default_trigger: "<Control><Shift>F12",
     },
     HotkeyDef {
         action: HotkeyAction::Stop,
-        id: "stop",
         settings_key: "hotkey_stop",
         label_key: "Stop recording",
-        default_trigger: "<Control><Shift>F11",
     },
 ];
 
@@ -119,23 +106,12 @@ impl HotkeyAction {
     }
 }
 
-/// The action with the given portal id, or `None` for an id this build does
-/// not know (for example one left in the desktop's store by a newer version).
-pub fn hotkey_by_id(id: &str) -> Option<HotkeyAction> {
-    hotkey_defs()
-        .iter()
-        .find(|def| def.id == id)
-        .map(|def| def.action)
-}
-
 /// One saved global hotkey: which action and the text stored for it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HotkeyBinding {
     pub action: HotkeyAction,
     /// The text saved in the settings for this action; empty means unbound.
-    /// With [`HotkeyChoice::Field`] it is the canonical label
-    /// (`Ctrl+Shift+F12`); with [`HotkeyChoice::SystemDialog`] it is the
-    /// description the desktop reported (`Press <Shift><Control>F12`).
+    /// It is the canonical label (`Ctrl+Shift+F12`).
     pub combination: String,
 }
 
@@ -151,38 +127,6 @@ impl HotkeyBinding {
     pub fn is_set(&self) -> bool {
         !self.combination.trim().is_empty()
     }
-}
-
-/// How the user chooses the global combinations on this session.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum HotkeyChoice {
-    /// The settings field captures the next key press, and the backend grabs
-    /// that combination itself.
-    #[default]
-    Field,
-    /// The desktop owns the combinations: it asks in its own dialog, reports
-    /// the texts back, and the field only shows what it reported.
-    SystemDialog,
-}
-
-/// What the backend reports about a system-dialog hotkey request.
-#[derive(Debug)]
-pub enum HotkeyEvent {
-    /// The desktop is asking the user; the previous set is still in effect.
-    Pending,
-    /// The set the desktop applied, in table order. A row may be empty when the
-    /// user bound nothing to it.
-    Applied(Vec<HotkeyBinding>),
-    /// The request did not complete (the user cancelled the dialog, or the
-    /// desktop refused). `bindings` is the set that stays in effect.
-    Failed {
-        message: String,
-        bindings: Vec<HotkeyBinding>,
-    },
-    /// The desktop portal cannot provide hotkeys after all; the backend has
-    /// switched to its fallback, and the application should apply the settings
-    /// through it again.
-    Unavailable,
 }
 
 /// A key in a global hotkey.
@@ -385,8 +329,6 @@ pub enum ShellEvent {
     Close,
     /// A registered global hotkey was pressed.
     Hotkey(HotkeyAction),
-    /// The desktop answered a global-hotkey request made in its own dialog.
-    Hotkeys(HotkeyEvent),
     Quit,
 }
 
@@ -491,12 +433,6 @@ mod tests {
     #[test]
     fn every_action_has_exactly_one_table_row() {
         for (index, def) in hotkey_defs().iter().enumerate() {
-            assert_eq!(
-                def.action.def().id,
-                def.id,
-                "{:?} resolves to its own row",
-                def.action
-            );
             assert_eq!(def.action.index(), index);
             assert_eq!(HotkeyAction::from_index(index), Some(def.action));
         }
@@ -505,16 +441,13 @@ mod tests {
     }
 
     #[test]
-    fn the_table_ids_and_settings_keys_are_distinct() {
+    fn the_table_settings_keys_are_distinct() {
         let defs = hotkey_defs();
         for (index, def) in defs.iter().enumerate() {
             for other in &defs[index + 1..] {
-                assert_ne!(def.id, other.id, "duplicate portal id");
                 assert_ne!(def.settings_key, other.settings_key, "duplicate key");
             }
-            assert_eq!(hotkey_by_id(def.id), Some(def.action));
         }
-        assert_eq!(hotkey_by_id("window"), None);
     }
 
     #[test]

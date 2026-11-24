@@ -6,18 +6,18 @@ use nokhwa::Camera;
 use std::time::{Duration, Instant};
 
 /// How long opening a camera waits for its first frame before closing the
-/// camera and trying once more. The v4l2 driver answers `EINVAL` until it has
-/// negotiated the stream, which happens shortly after `open_stream`; that wait
-/// belongs to opening, not to the recording loop.
+/// camera and trying once more. Media Foundation can answer "not ready" until
+/// the stream is negotiated, which happens shortly after `open_stream`; that
+/// wait belongs to opening, not to the recording loop.
 ///
 /// `nokhwa::Camera` is not `Send` and offers no timed read, so `frame()` can
 /// block until the first frame arrives and cannot be interrupted. This deadline
-/// therefore catches only fast-failing reads (`EINVAL` before the stream is
-/// negotiated); a blocking read may take longer than two seconds. On a UVC
-/// 1920x1080 camera the first frame took 2.1-3.4 s (median 2.8 s) while
-/// `open_stream` took 0.00 s, so two seconds plus one retry wait up to about
-/// four seconds before giving up. A hard bound would need a v4l2 read of our
-/// own with a `poll`/`DQBUF` timeout instead of nokhwa.
+/// therefore catches only fast-failing reads (before the stream is negotiated);
+/// a blocking read may take longer than two seconds. On a UVC 1920x1080 camera
+/// the first frame took 2.1-3.4 s (median 2.8 s) while `open_stream` took
+/// 0.00 s, so two seconds plus one retry wait up to about four seconds before
+/// giving up. A hard bound would need a read of our own with a timeout instead
+/// of nokhwa.
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct CameraInfo {
@@ -26,11 +26,8 @@ pub struct CameraInfo {
 }
 
 pub fn list() -> Result<Vec<CameraInfo>, String> {
-    let devices = nokhwa::query(match crate::backend::camera::api() {
-        platform_core::camera::CameraApi::MediaFoundation => ApiBackend::MediaFoundation,
-        platform_core::camera::CameraApi::Video4Linux => ApiBackend::Video4Linux,
-    })
-    .map_err(|error| camera_error(&error))?;
+    let devices =
+        nokhwa::query(ApiBackend::MediaFoundation).map_err(|error| camera_error(&error))?;
     Ok(devices
         .into_iter()
         .map(|device| CameraInfo {
@@ -135,8 +132,7 @@ where
 /// The read itself fails fast until the stream is negotiated, so retrying it
 /// with a deadline is the bounded wait that is left. That deadline only bounds
 /// fast failures: a blocking read is not interrupted and may outlive it (see
-/// `FIRST_FRAME_TIMEOUT`); a hard bound needs a v4l2 read with a `poll`/`DQBUF`
-/// timeout of our own.
+/// `FIRST_FRAME_TIMEOUT`); a hard bound needs a timed read of our own.
 fn wait_for_first_frame<F>(timeout: Duration, mut read: F) -> Result<Frame, String>
 where
     F: FnMut() -> Result<Frame, String>,
@@ -316,7 +312,7 @@ mod tests {
         let frame = wait_for_first_frame(Duration::from_millis(500), || {
             reads += 1;
             if reads < 3 {
-                Err("EINVAL".to_string())
+                Err("not ready".to_string())
             } else {
                 decode_mjpeg(MJPEG_FRAME)
             }
@@ -329,13 +325,14 @@ mod tests {
     #[test]
     fn a_camera_that_never_starts_reports_the_last_driver_error() {
         let started = Instant::now();
-        let error =
-            match wait_for_first_frame(Duration::from_millis(50), || Err("EINVAL".to_string())) {
-                Ok(_) => panic!("a camera that never delivers a frame times out"),
-                Err(error) => error,
-            };
+        let error = match wait_for_first_frame(Duration::from_millis(50), || {
+            Err("not ready".to_string())
+        }) {
+            Ok(_) => panic!("a camera that never delivers a frame times out"),
+            Err(error) => error,
+        };
         assert!(started.elapsed() >= Duration::from_millis(50));
-        assert_eq!(error, "EINVAL");
+        assert_eq!(error, "not ready");
     }
 
     #[test]
@@ -350,14 +347,16 @@ mod tests {
         let mut attempts = 0;
         let error = match open_with_retry::<(), _>(|| {
             attempts += 1;
-            Err(OpenError::FirstFrame(format!("EINVAL attempt {attempts}")))
+            Err(OpenError::FirstFrame(format!(
+                "not ready attempt {attempts}"
+            )))
         }) {
             Ok(_) => panic!("two timed-out attempts fail to open"),
             Err(error) => error,
         };
         assert_eq!(attempts, 2);
         assert_eq!(error.matches("2 s").count(), 2, "{error}");
-        assert!(error.contains("EINVAL attempt 2"), "{error}");
+        assert!(error.contains("not ready attempt 2"), "{error}");
     }
 
     #[test]
@@ -366,7 +365,7 @@ mod tests {
         let frame = open_with_retry(|| {
             attempts += 1;
             if attempts == 1 {
-                Err(OpenError::FirstFrame("EINVAL".to_string()))
+                Err(OpenError::FirstFrame("not ready".to_string()))
             } else {
                 decode_mjpeg(MJPEG_FRAME).map_err(OpenError::FirstFrame)
             }
