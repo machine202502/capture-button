@@ -446,6 +446,16 @@ body::-webkit-scrollbar {
   margin-top: 44px;
 }
 
+/* The operating system values are longer than a number, so they take a row of
+   their own instead of pushing the three numbers around. */
+.stat-os {
+  flex-basis: 100%;
+}
+
+.stat-os strong {
+  font-size: 26px;
+}
+
 .stat {
   display: flex;
   flex-direction: column;
