@@ -120,7 +120,7 @@
     "Tray video": "Tray video",
     "Tray audio": "Tray audio",
     "Performance": "Performance",
-    "Performance and overlay": "Performance and overlay",
+    "Miscellaneous": "Miscellaneous",
     "Overlay renderer": "Overlay renderer",
     "Encoder threads": "Encoder threads",
     "Auto": "Auto",
@@ -159,6 +159,9 @@
     "The camera returned an empty frame": "The camera returned an empty frame",
     "The camera frame could not be decoded": "The camera frame could not be decoded",
     "The camera did not start within {seconds} s; the retry did not start within {seconds} s either": "The camera did not start within {seconds} s; the retry did not start within {seconds} s either",
-    "Show level in Settings": "Show level in Settings"
+    "Show level in Settings": "Show level in Settings",
+    "Volume above 100%": "Volume above 100%",
+    "Gain {gain}% can overload the sound and cause distortion. Press “Got it” to apply it.": "Gain {gain}% can overload the sound and cause distortion. Press “Got it” to apply it.",
+    "Got it": "Got it"
   }
 }

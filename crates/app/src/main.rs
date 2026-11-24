@@ -35,6 +35,39 @@ const WEBSITE: &str = "https://machine202502.github.io/capture-button/";
 const CBN_SELCHANGE: u16 = 1;
 const CBN_DROPDOWN: u16 = 7;
 
+/// Where the gain scale is neutral: 100% passes the input through unchanged.
+const UNITY_GAIN: u32 = 100;
+
+/// How long the red clip dot stays lit after a peak reaches full scale.
+const CLIP_HOLD: Duration = Duration::from_millis(1500);
+
+/// Arms or fires the above-100% warning for one gain slider.
+///
+/// A release at or below 100% arms the next crossing. A release above it warns
+/// once and then stays quiet until the slider returns to 100%. A saved value
+/// above 100% starts disarmed, so launching the app does not pop the warning by
+/// itself.
+fn gain_warning_step(warned: &mut bool, value: u32) -> bool {
+    if value <= UNITY_GAIN {
+        *warned = true;
+        false
+    } else if *warned {
+        *warned = false;
+        true
+    } else {
+        false
+    }
+}
+
+/// Converts a percent gain to decibels; 100% is unity and 0 dB.
+fn gain_db(gain: u32) -> f32 {
+    if gain == 0 {
+        f32::NEG_INFINITY
+    } else {
+        20.0 * (gain as f32 / 100.0).log10()
+    }
+}
+
 pub(crate) fn history_stamp(
     day: u16,
     month: u16,
@@ -85,6 +118,8 @@ fn accepts_command(mode: Mode, id: i32, region_open: bool) -> bool {
                 | ui::ID_ABOUT_GITHUB
                 | ui::ID_ABOUT_UPDATE
                 | ui::ID_SOURCE_CLOSE
+                | ui::ID_GAIN_WARNING_OK
+                | ui::ID_GAIN_WARNING_CANCEL
                 | ui::ID_CAMERA_CLOSE
         )
         || ui::folder_control(id).is_some()
@@ -349,6 +384,21 @@ struct PreviewPair {
     system: Option<platform::audio::AudioPreview>,
 }
 
+/// A gain above 100% that the slider shows but the app has not applied.
+///
+/// The slider stays where the user left it; the sound and the settings keep
+/// `applied` until the warning is answered. The button commits `value`, closing
+/// the warning any other way puts `previous` back on the slider.
+struct PendingGain {
+    profile: ProfileRef,
+    system: bool,
+    id: i32,
+    value: u32,
+    previous: u32,
+    /// The gain that is actually in effect while the warning waits.
+    applied: u32,
+}
+
 struct App {
     controls: Controls,
     settings: Settings,
@@ -362,6 +412,17 @@ struct App {
     /// Peak-hold per profile, `[microphone, system]` in `ProfileRef::ALL` order.
     meters: [[platform::audio::Meter; 2]; 4],
     levels: [[f32; 2]; 4],
+    /// The last time each input reached full scale, for the red clip dot.
+    clip_until: [[Option<Instant>; 2]; 4],
+    /// Whether the next release above 100% should show the warning. `false`
+    /// means the user has already been warned and has not returned to 100%.
+    gain_warned: [[bool; 2]; 4],
+    /// The slider being dragged and the value it started from, so a release
+    /// that needs confirmation can put the old value back.
+    gain_drag: Option<(i32, u32)>,
+    /// The gain the open warning asks about; nothing is applied until it is
+    /// accepted.
+    pending_gain: Option<PendingGain>,
     levels_at: Instant,
     /// Metering-only inputs, one pair per profile; only the visible page's
     /// profiles are open.
@@ -396,6 +457,10 @@ impl App {
     fn new() -> Self {
         let settings = Settings::load(platform::shell::hotkey_choice());
         media::set_output_folders(&settings.folders);
+        let gain_warned = std::array::from_fn(|slot| {
+            let audio = ProfileRef::ALL[slot].audio(&settings);
+            [audio.gain <= UNITY_GAIN, audio.system_gain <= UNITY_GAIN]
+        });
         Self {
             controls: Controls::new(),
             settings,
@@ -408,6 +473,10 @@ impl App {
             live_system_gain_id: None,
             meters: Default::default(),
             levels: [[0.0; 2]; 4],
+            clip_until: [[None; 2]; 4],
+            gain_warned,
+            gain_drag: None,
+            pending_gain: None,
             levels_at: Instant::now(),
             previews: Default::default(),
             recording_source: None,
@@ -574,12 +643,15 @@ impl App {
         }
     }
 
-    /// Moves the level bars inside the audio sliders.
+    /// Moves the level meters next to the audio gain sliders.
     ///
-    /// While a take records, the recording profile shows the take's peaks.
-    /// When the window is open on a page with audio cards, each card's own
-    /// metering-only preview feeds its pair of bars; every other profile stays
-    /// at zero. The peak hold and fall live in [`platform::audio::Meter`].
+    /// While a take records, the recording profile shows the take's peaks,
+    /// which the capture stream already publishes after its live gain. When the
+    /// window is open on a page with audio cards, each card's metering-only
+    /// preview is read at the device level and the profile's gain is added in
+    /// decibels, so the meter shows what the recording would receive. Every
+    /// other profile stays at zero. The peak hold and fall live in
+    /// [`platform::audio::Meter`].
     fn update_levels(&mut self) {
         let elapsed = self.levels_at.elapsed();
         self.levels_at = Instant::now();
@@ -594,18 +666,24 @@ impl App {
         } else {
             for profile in ProfileRef::ALL {
                 let slot = profile.index();
+                let audio = profile.audio(&self.settings);
+                let microphone_gain = gain_db(audio.gain);
+                let system_gain = gain_db(audio.system_gain);
                 let microphone = self.previews[slot]
                     .microphone
                     .as_ref()
-                    .map_or(f32::NEG_INFINITY, |preview| preview.level());
+                    .map_or(f32::NEG_INFINITY, |preview| {
+                        preview.level() + microphone_gain
+                    });
                 let system = self.previews[slot]
                     .system
                     .as_ref()
-                    .map_or(f32::NEG_INFINITY, |preview| preview.level());
+                    .map_or(f32::NEG_INFINITY, |preview| preview.level() + system_gain);
                 self.advance_profile(profile, microphone, system, elapsed);
             }
         }
-        self.controls.set_levels(&self.levels);
+        let clips = self.clips_now();
+        self.controls.set_levels(&self.levels, &clips);
     }
 
     fn advance_profile(
@@ -618,6 +696,20 @@ impl App {
         let slot = profile.index();
         self.levels[slot][0] = self.meters[slot][0].update(microphone, elapsed);
         self.levels[slot][1] = self.meters[slot][1].update(system, elapsed);
+        let now = Instant::now();
+        for (kind, db) in [microphone, system].into_iter().enumerate() {
+            if db >= 0.0 {
+                self.clip_until[slot][kind] = Some(now + CLIP_HOLD);
+            }
+        }
+    }
+
+    /// The clip dots to draw: a peak reached full scale within [`CLIP_HOLD`].
+    fn clips_now(&self) -> [[bool; 2]; 4] {
+        let now = Instant::now();
+        std::array::from_fn(|slot| {
+            std::array::from_fn(|kind| self.clip_until[slot][kind].is_some_and(|until| now < until))
+        })
     }
 
     /// Empties every bar; no device is open outside a take or a page preview.
@@ -626,13 +718,15 @@ impl App {
             self.reset_profile_levels(profile);
         }
         self.levels_at = Instant::now();
-        self.controls.set_levels(&self.levels);
+        let clips = self.clips_now();
+        self.controls.set_levels(&self.levels, &clips);
     }
 
     fn reset_profile_levels(&mut self, profile: ProfileRef) {
         let slot = profile.index();
         self.meters[slot] = [platform::audio::Meter::new(), platform::audio::Meter::new()];
         self.levels[slot] = [0.0; 2];
+        self.clip_until[slot] = [None, None];
     }
 
     /// Starts the twenty-per-second meter timer; showing the window again
@@ -791,7 +885,7 @@ impl App {
                 self.controls.refresh_devices(id);
             }
             if notification == CBN_SELCHANGE {
-                self.controls.read_ui(&mut self.settings, true);
+                self.read_ui(true);
                 if let Some(profile) = ui::profile_for_microphone_device(id)
                     .or_else(|| ui::profile_for_system_device(id))
                 {
@@ -805,13 +899,13 @@ impl App {
                 self.controls.refresh_monitors();
             }
             if notification == CBN_SELCHANGE {
-                self.controls.read_ui(&mut self.settings, true);
+                self.read_ui(true);
             }
             return;
         }
         if id == ID_LANGUAGE {
             if notification == 1 {
-                self.controls.read_ui(&mut self.settings, true);
+                self.read_ui(true);
                 self.apply_language();
             }
             return;
@@ -839,6 +933,8 @@ impl App {
                 }));
             }
             ui::ID_ABOUT_CLOSE => self.controls.show_about(false),
+            ui::ID_GAIN_WARNING_OK => self.accept_gain_warning(),
+            ui::ID_GAIN_WARNING_CANCEL => self.dismiss_gain_warning(),
             ui::ID_ABOUT_SITE => platform::shell::open_url(WEBSITE),
             ui::ID_ABOUT_LOGS => platform::logging::open_dir(),
             ui::ID_ABOUT_GITHUB => platform::shell::open_url(REPOSITORY),
@@ -855,7 +951,7 @@ impl App {
                 self.controls.set_format_index((id - ID_FORMAT) as usize);
                 self.settings.ui.format = Format::from_index((id - ID_FORMAT) as usize);
                 self.controls.load_main_video(&self.settings.ui);
-                self.controls.read_ui(&mut self.settings, true);
+                self.read_ui(true);
                 self.controls.refresh_formats();
             }
             160..=162 => {
@@ -864,7 +960,7 @@ impl App {
                 self.settings.tray_area.format =
                     Format::from_index((id - ID_TRAY_AREA_FORMAT) as usize);
                 self.controls.load_tray(&self.settings, true);
-                self.controls.read_ui(&mut self.settings, true);
+                self.read_ui(true);
                 self.controls.refresh_formats();
             }
             170..=172 => {
@@ -873,7 +969,7 @@ impl App {
                 self.settings.tray_video.format =
                     Format::from_index((id - ID_TRAY_VIDEO_FORMAT) as usize);
                 self.controls.load_tray(&self.settings, false);
-                self.controls.read_ui(&mut self.settings, true);
+                self.read_ui(true);
                 self.controls.refresh_formats();
             }
             ID_RESOLUTION
@@ -889,8 +985,9 @@ impl App {
             | ID_TRAY_AREA_CURSOR
             | ID_TRAY_VIDEO_CURSOR
             | ID_TRAY_AUDIO_SYSTEM
-            | ID_TRAY_AUDIO_MIC => {
-                self.controls.read_ui(&mut self.settings, true);
+            | ID_TRAY_AUDIO_MIC
+            | ID_IDLE_LEVEL => {
+                self.read_ui(true);
                 if id == ID_IDLE_LEVEL {
                     self.refresh_previews();
                 } else if let Some(profile) = audio_toggle_profile(id) {
@@ -946,33 +1043,49 @@ impl App {
         }
     }
 
-    fn set_mic_gain(&mut self, id: i32, value: u32, persist: bool) {
-        let value = value.min(ui::MIC_GAIN_MAX);
-        let Some(source) = ui::profile_for_microphone(id) else {
-            return;
-        };
-        self.settings.audio_mut(source).gain = value;
-        self.controls.set_microphone_gain(id, value);
-        if self.live_gain_id == Some(id) {
-            if let Some(gain) = &self.live_gain {
-                gain.store(value, Ordering::SeqCst);
+    /// Reads the window into the settings.
+    ///
+    /// A gain that is waiting for the warning is left at the value that is
+    /// actually applied, so saving the settings from elsewhere (the tray, a
+    /// hotkey, closing the window) cannot commit it behind the card's back.
+    fn read_ui(&mut self, persist: bool) {
+        let held = self
+            .pending_gain
+            .as_ref()
+            .map(|pending| (pending.profile, pending.system, pending.applied));
+        self.controls
+            .read_ui(&mut self.settings, persist && held.is_none());
+        if let Some((profile, system, applied)) = held {
+            let audio = self.settings.audio_mut(profile);
+            if system {
+                audio.system_gain = applied;
+            } else {
+                audio.gain = applied;
             }
-        }
-        if persist {
-            self.settings.save();
         }
     }
 
-    fn set_system_gain(&mut self, id: i32, value: u32, persist: bool) {
+    /// Writes one gain into the settings, the window and a running take.
+    ///
+    /// `persist` saves the settings to the store; a drag passes `false` and the
+    /// release saves once.
+    fn set_gain(&mut self, profile: ProfileRef, system: bool, id: i32, value: u32, persist: bool) {
         let value = value.min(ui::MIC_GAIN_MAX);
-        let Some(source) = ui::profile_for_system_gain(id) else {
-            return;
-        };
-        self.settings.audio_mut(source).system_gain = value;
-        self.controls.set_system_gain(id, value);
-        if self.live_system_gain_id == Some(id) {
-            if let Some(gain) = &self.live_system_gain {
-                gain.store(value, Ordering::SeqCst);
+        if system {
+            self.settings.audio_mut(profile).system_gain = value;
+            self.controls.set_system_gain(id, value);
+            if self.live_system_gain_id == Some(id) {
+                if let Some(gain) = &self.live_system_gain {
+                    gain.store(value, Ordering::SeqCst);
+                }
+            }
+        } else {
+            self.settings.audio_mut(profile).gain = value;
+            self.controls.set_microphone_gain(id, value);
+            if self.live_gain_id == Some(id) {
+                if let Some(gain) = &self.live_gain {
+                    gain.store(value, Ordering::SeqCst);
+                }
             }
         }
         if persist {
@@ -1059,7 +1172,7 @@ impl App {
     }
 
     fn capture_source(&mut self, screenshot: bool) {
-        self.controls.read_ui(&mut self.settings, true);
+        self.read_ui(true);
         let sources = platform::screen::list_sources();
         if sources.is_empty() {
             self.error(&tr("No capture sources were found"));
@@ -1077,7 +1190,7 @@ impl App {
         if self.mode != Mode::Idle || self.camera_photo.is_some() {
             return;
         }
-        self.controls.read_ui(&mut self.settings, true);
+        self.read_ui(true);
         let cameras = match camera::list() {
             Ok(cameras) => cameras,
             Err(error) => {
@@ -1128,7 +1241,7 @@ impl App {
             return;
         }
         if photo {
-            self.controls.read_ui(&mut self.settings, true);
+            self.read_ui(true);
             let index = index.clone();
             let (sender, receiver) = std::sync::mpsc::channel();
             let started = std::thread::Builder::new()
@@ -1225,7 +1338,7 @@ impl App {
     }
 
     fn screenshot_screen(&mut self) {
-        self.controls.read_ui(&mut self.settings, true);
+        self.read_ui(true);
         let recording = self.mode == Mode::Recording;
         if recording {
             self.outline.hide();
@@ -1272,7 +1385,7 @@ impl App {
         }
         let recording = self.mode == Mode::Recording;
         self.hide_region = hide;
-        self.controls.read_ui(&mut self.settings, true);
+        self.read_ui(true);
         if !recording {
             self.conceal_for_ui(hide);
         }
@@ -1403,7 +1516,7 @@ impl App {
         if self.mode != Mode::Idle || self.session.is_some() {
             return;
         }
-        self.controls.read_ui(&mut self.settings, true);
+        self.read_ui(true);
         let recording = self.recording_for(source, take, force_format);
         if recording.video().is_none() && !recording.audio().system && !recording.audio().microphone
         {
@@ -1840,7 +1953,7 @@ impl App {
 
     fn hide_window(&mut self) {
         // The window may be closed while a slider still has an unsaved value.
-        self.controls.read_ui(&mut self.settings, true);
+        self.read_ui(true);
         platform::logging::info("window hidden");
         ui::hide();
         self.stop_level_timer();
@@ -1865,7 +1978,7 @@ impl App {
             self.quit_after_save = true;
             return;
         }
-        self.controls.read_ui(&mut self.settings, true);
+        self.read_ui(true);
         ui::hide();
         if platform::region::active() {
             platform::region::cancel();
@@ -1880,11 +1993,11 @@ impl App {
                 ui::UiRequest::Command { id, notification } => self.command(id, notification),
                 ui::UiRequest::Slider { id, value, persist } => self.slider(id, value, persist),
                 ui::UiRequest::HotkeysChanged => {
-                    self.controls.read_ui(&mut self.settings, true);
+                    self.read_ui(true);
                     self.apply_hotkeys();
                 }
                 ui::UiRequest::HotkeyChange(action) => {
-                    self.controls.read_ui(&mut self.settings, true);
+                    self.read_ui(true);
                     self.change_hotkey(action);
                 }
                 ui::UiRequest::CloseRequested => {
@@ -1899,14 +2012,12 @@ impl App {
     }
 
     fn slider(&mut self, id: i32, value: u32, persist: bool) {
-        if ui::profile_for_microphone(id).is_some() {
-            self.set_mic_gain(id, value, persist);
-            self.controls.read_ui(&mut self.settings, persist);
+        if let Some(profile) = ui::profile_for_microphone(id) {
+            self.gain_slider(profile, false, id, value, persist);
             return;
         }
-        if ui::profile_for_system_gain(id).is_some() {
-            self.set_system_gain(id, value, persist);
-            self.controls.read_ui(&mut self.settings, persist);
+        if let Some(profile) = ui::profile_for_system_gain(id) {
+            self.gain_slider(profile, true, id, value, persist);
             return;
         }
         self.controls.set_slider(id, value);
@@ -1921,7 +2032,109 @@ impl App {
             },
             &trf("{fps} FPS", &[("fps", &fps.to_string())]),
         );
-        self.controls.read_ui(&mut self.settings, persist);
+        self.read_ui(persist);
+    }
+
+    /// Moves one gain slider and decides whether the new value may be applied.
+    ///
+    /// A value up to 100% follows the drag and takes effect at once. Above 100%
+    /// the slider still follows the pointer, but the sound keeps the gain that
+    /// is already applied. The first release there keeps the value on the slider
+    /// and asks: [`ID_GAIN_WARNING_OK`] applies it, and closing the warning any
+    /// other way rolls the slider back to where the gesture started.
+    fn gain_slider(
+        &mut self,
+        profile: ProfileRef,
+        system: bool,
+        id: i32,
+        value: u32,
+        persist: bool,
+    ) {
+        let value = value.min(ui::MIC_GAIN_MAX);
+        let slot = profile.index();
+        let kind = usize::from(system);
+        if !persist {
+            if self.gain_drag.is_none() {
+                let audio = profile.audio(&self.settings);
+                let previous = if system {
+                    audio.system_gain
+                } else {
+                    audio.gain
+                };
+                self.gain_drag = Some((id, previous));
+            }
+            if value > UNITY_GAIN && self.gain_warned[slot][kind] {
+                // Move the slider only: the sound keeps the gain that was
+                // applied last until the warning is answered.
+                if system {
+                    self.controls.set_system_gain(id, value);
+                } else {
+                    self.controls.set_microphone_gain(id, value);
+                }
+                return;
+            }
+            self.set_gain(profile, system, id, value, false);
+            self.read_ui(false);
+            return;
+        }
+        let previous = match self.gain_drag.take() {
+            Some((drag_id, previous)) if drag_id == id => previous,
+            _ => value,
+        };
+        if gain_warning_step(&mut self.gain_warned[slot][kind], value) {
+            let audio = profile.audio(&self.settings);
+            let applied = if system {
+                audio.system_gain
+            } else {
+                audio.gain
+            };
+            self.pending_gain = Some(PendingGain {
+                profile,
+                system,
+                id,
+                value,
+                previous,
+                applied,
+            });
+            self.controls.show_gain_warning(value);
+            return;
+        }
+        self.set_gain(profile, system, id, value, true);
+        self.read_ui(true);
+    }
+
+    /// Commits the gain the warning was holding back.
+    fn accept_gain_warning(&mut self) {
+        if let Some(pending) = self.pending_gain.take() {
+            self.set_gain(
+                pending.profile,
+                pending.system,
+                pending.id,
+                pending.value,
+                true,
+            );
+            self.read_ui(true);
+        }
+        self.controls.close_gain_warning();
+    }
+
+    /// Drops the held gain and rolls the slider back to where the drag started.
+    fn dismiss_gain_warning(&mut self) {
+        if let Some(pending) = self.pending_gain.take() {
+            self.set_gain(
+                pending.profile,
+                pending.system,
+                pending.id,
+                pending.previous,
+                false,
+            );
+            self.read_ui(false);
+            // The slider is back at or below 100%, so the next crossing warns
+            // again.
+            self.gain_warned[pending.profile.index()][usize::from(pending.system)] =
+                pending.previous <= UNITY_GAIN;
+        }
+        self.controls.close_gain_warning();
     }
 
     fn set_tray_status(&mut self, text: &str) {

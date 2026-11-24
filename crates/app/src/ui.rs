@@ -31,6 +31,8 @@ pub const ID_ABOUT_LOGS: i32 = 283;
 pub const ID_ABOUT_GITHUB: i32 = 284;
 pub const ID_ABOUT_UPDATE: i32 = 287;
 pub const ID_SOURCE_CLOSE: i32 = 285;
+pub const ID_GAIN_WARNING_OK: i32 = 288;
+pub const ID_GAIN_WARNING_CANCEL: i32 = 292;
 pub const ID_CAMERA_PHOTO: i32 = 289;
 pub const ID_CAMERA_VIDEO: i32 = 290;
 pub const ID_CAMERA_CLOSE: i32 = 291;
@@ -119,7 +121,7 @@ pub const ID_SOUND_VOLUME: i32 = 226;
 pub const ID_IDLE_LEVEL: i32 = 246;
 pub const ID_SCREENSHOT_SOUND: i32 = 227;
 pub const ID_TRAY_AUDIO_GAIN_VALUE: i32 = 208;
-pub const MIC_GAIN_MAX: u32 = 300;
+pub const MIC_GAIN_MAX: u32 = media::GAIN_MAX;
 pub const ID_SYSTEM_DEVICE: i32 = 229;
 pub const ID_TRAY_AREA_SYSTEM_DEVICE: i32 = 232;
 pub const ID_TRAY_VIDEO_SYSTEM_DEVICE: i32 = 233;
@@ -612,6 +614,8 @@ fn sync_labels(ui: &MainWindow) {
     labels.set_completion_sound(tr("Completion sound").into());
     labels.set_sounds(tr("Sounds").into());
     labels.set_volume(tr("Volume").into());
+    labels.set_gain_warning_title(tr("Volume above 100%").into());
+    labels.set_gain_warning_ok(tr("Got it").into());
     labels.set_play_on_save(tr("Play when a recording is saved").into());
     labels.set_play_on_shot(tr("Play for screenshots and photos").into());
     labels.set_show_level_idle(tr("Show level in Settings").into());
@@ -621,7 +625,7 @@ fn sync_labels(ui: &MainWindow) {
     labels.set_tray_video(tr("Tray video").into());
     labels.set_monitor(tr("Monitor").into());
     labels.set_tray_audio(tr("Tray audio").into());
-    labels.set_performance_overlay(tr("Performance and overlay").into());
+    labels.set_misc(tr("Miscellaneous").into());
     labels.set_overlay_renderer(tr("Overlay renderer").into());
     labels.set_encoder_threads(tr("Encoder threads").into());
     labels.set_language(tr("Language").into());
@@ -795,6 +799,14 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_video_system_level(model.levels[2][1]);
     ui.set_audio_mic_level(model.levels[3][0]);
     ui.set_audio_system_level(model.levels[3][1]);
+    ui.set_mic_clip(model.clips[0][0]);
+    ui.set_system_clip(model.clips[0][1]);
+    ui.set_area_mic_clip(model.clips[1][0]);
+    ui.set_area_system_clip(model.clips[1][1]);
+    ui.set_video_mic_clip(model.clips[2][0]);
+    ui.set_video_system_clip(model.clips[2][1]);
+    ui.set_audio_mic_clip(model.clips[3][0]);
+    ui.set_audio_system_clip(model.clips[3][1]);
     ui.set_gain(model.gains[0] as i32);
     ui.set_area_gain(model.gains[1] as i32);
     ui.set_video_gain(model.gains[2] as i32);
@@ -840,6 +852,14 @@ fn sync(ui: &MainWindow, model: &Model) {
     ui.set_recording(model.recording);
     ui.set_saving(model.saving);
     ui.set_about_open(model.about_open);
+    ui.set_gain_warning(model.gain_warning);
+    ui.global::<Labels>().set_gain_warning_body(
+        trf(
+            "Gain {gain}% can overload the sound and cause distortion. Press “Got it” to apply it.",
+            &[("gain", &model.gain_warning_value.to_string())],
+        )
+        .into(),
+    );
     let (update_label, update_enabled, update_primary) = match model.update_state {
         UpdateState::Idle | UpdateState::Checking => (tr("Update"), false, false),
         UpdateState::Available => (tr("Update"), true, true),
@@ -1049,7 +1069,12 @@ struct Model {
     saving: bool,
     /// Live level per profile: `[microphone, system]` in `ProfileRef::ALL` order.
     levels: [[f32; 2]; 4],
+    /// A peak reached full scale since the last meter reset, per profile.
+    clips: [[bool; 2]; 4],
     about_open: bool,
+    gain_warning: bool,
+    /// The held gain the warning asks about, shown in its text.
+    gain_warning_value: u32,
     update_state: UpdateState,
     source_open: bool,
     camera_open: bool,
@@ -1114,6 +1139,21 @@ impl Controls {
         self.update(|model| model.about_open = open);
     }
 
+    /// Shows the warning for a gain the release is holding back.
+    ///
+    /// The slider stays where the user left it: the value is only dropped when
+    /// the warning is closed without the button.
+    pub fn show_gain_warning(&self, gain: u32) {
+        self.update(|model| {
+            model.gain_warning = true;
+            model.gain_warning_value = gain;
+        });
+    }
+
+    pub fn close_gain_warning(&self) {
+        self.update(|model| model.gain_warning = false);
+    }
+
     pub fn set_update_state(&self, state: UpdateState) {
         self.update(|model| model.update_state = state);
     }
@@ -1156,21 +1196,23 @@ impl Controls {
         self.update(|model| model.saving = saving);
     }
 
-    /// Moves the live level inside the microphone and system-audio sliders.
+    /// Moves the separate level meters next to the gain sliders.
     ///
-    /// `microphone` and `system` are `0..=1` bar positions from the recording
-    /// timer. Only the two properties are pushed: a full `sync` here would
-    /// rebuild the hotkey rows twenty times a second.
-    pub fn set_levels(&self, levels: &[[f32; 2]; 4]) {
+    /// `levels` are `0..=1` bar positions from the recording timer and `clips`
+    /// say which meter saw full scale. Only these properties are pushed: a full
+    /// `sync` here would rebuild the hotkey rows twenty times a second.
+    pub fn set_levels(&self, levels: &[[f32; 2]; 4], clips: &[[bool; 2]; 4]) {
         let levels = std::array::from_fn(|profile| {
             [
                 levels[profile][0].clamp(0.0, 1.0),
                 levels[profile][1].clamp(0.0, 1.0),
             ]
         });
+        let clips = *clips;
         {
             let mut model = self.model.lock().unwrap_or_else(|e| e.into_inner());
             model.levels = levels;
+            model.clips = clips;
         }
         if !visible() {
             return;
@@ -1189,6 +1231,14 @@ impl Controls {
                 ui.set_video_system_level(levels[2][1]);
                 ui.set_audio_mic_level(levels[3][0]);
                 ui.set_audio_system_level(levels[3][1]);
+                ui.set_mic_clip(clips[0][0]);
+                ui.set_system_clip(clips[0][1]);
+                ui.set_area_mic_clip(clips[1][0]);
+                ui.set_area_system_clip(clips[1][1]);
+                ui.set_video_mic_clip(clips[2][0]);
+                ui.set_video_system_clip(clips[2][1]);
+                ui.set_audio_mic_clip(clips[3][0]);
+                ui.set_audio_system_clip(clips[3][1]);
             }
         })
         .ok();

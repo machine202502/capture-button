@@ -24,6 +24,9 @@ pub struct VideoSettings {
     pub fps: u32,
 }
 
+/// The highest gain the audio sliders offer, in percent. Unity is 100.
+pub const GAIN_MAX: u32 = 200;
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct AudioSettings {
     pub system: bool,

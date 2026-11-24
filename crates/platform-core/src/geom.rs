@@ -807,7 +807,7 @@ pub fn downmix_stereo(input: &[f32], channels: usize) -> Vec<f32> {
 /// Multiplies microphone samples on the shared recording timeline.
 ///
 /// The result is not clamped here: the encoder clamps the final mix, and keeping
-/// values above 1.0 lets a 200% or 300% setting actually make a quiet microphone
+/// values above 1.0 lets a setting above 100% actually make a quiet microphone
 /// louder instead of flattening it at the ceiling twice.
 pub fn apply_gain(samples: &mut [f32], gain: u32) {
     let factor = gain as f32 / 100.0;

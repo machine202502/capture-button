@@ -120,7 +120,7 @@
     "Tray video": "托盘视频",
     "Tray audio": "托盘音频",
     "Performance": "性能",
-    "Performance and overlay": "性能与叠加层",
+    "Miscellaneous": "其他",
     "Overlay renderer": "叠加层渲染器",
     "Encoder threads": "编码线程",
     "Auto": "自动",
@@ -159,6 +159,9 @@
     "The camera returned an empty frame": "摄像头返回了空帧",
     "The camera frame could not be decoded": "无法解码摄像头画面",
     "The camera did not start within {seconds} s; the retry did not start within {seconds} s either": "相机未在 {seconds} 秒内启动，重试也未在 {seconds} 秒内启动",
-    "Show level in Settings": "在设置中显示音量"
+    "Show level in Settings": "在设置中显示音量",
+    "Volume above 100%": "音量高于 100%",
+    "Gain {gain}% can overload the sound and cause distortion. Press “Got it” to apply it.": "增益 {gain}% 可能导致声音过载和失真。按“知道了”应用。",
+    "Got it": "知道了"
   }
 }

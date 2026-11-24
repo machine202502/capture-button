@@ -292,3 +292,51 @@ fn tray_badge_stays_red_while_recording_and_orange_while_saving() {
         [12, 92, 165, 255]
     );
 }
+
+#[test]
+fn the_above_unity_warning_fires_once_per_crossing() {
+    // A fresh slider is armed: the first release above 100% warns.
+    let mut warned = true;
+    assert!(super::gain_warning_step(&mut warned, 140));
+    assert!(!warned);
+    // Staying above 100% keeps it quiet, whatever the value does.
+    assert!(!super::gain_warning_step(&mut warned, 160));
+    assert!(!super::gain_warning_step(&mut warned, 120));
+    assert!(!warned);
+    // Coming back to 100% or below arms it again.
+    assert!(!super::gain_warning_step(&mut warned, 100));
+    assert!(warned);
+    assert!(!super::gain_warning_step(&mut warned, 80));
+    assert!(warned);
+    assert!(super::gain_warning_step(&mut warned, 101));
+    assert!(!warned);
+}
+
+#[test]
+fn a_saved_gain_above_unity_starts_already_warned() {
+    // Startup builds the flag as `gain <= 100`, so a saved 150 is disarmed and
+    // launching the app never shows the modal by itself.
+    let saved = 150u32;
+    let mut warned = saved <= super::UNITY_GAIN;
+    assert!(!super::gain_warning_step(&mut warned, 150));
+    assert!(!warned);
+    assert!(!super::gain_warning_step(&mut warned, 100));
+    assert!(warned);
+    assert!(super::gain_warning_step(&mut warned, 150));
+}
+
+#[test]
+fn the_gain_scale_is_decibels_around_unity() {
+    assert!(super::gain_db(100).abs() < 0.001, "100% is 0 dB");
+    assert!(super::gain_db(0).is_infinite() && super::gain_db(0) < 0.0);
+    let doubled = super::gain_db(200);
+    assert!(
+        (doubled - 6.0206).abs() < 0.001,
+        "200% is about +6 dB, got {doubled}"
+    );
+    let halved = super::gain_db(50);
+    assert!(
+        (halved + 6.0206).abs() < 0.001,
+        "50% is about -6 dB, got {halved}"
+    );
+}

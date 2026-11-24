@@ -463,11 +463,11 @@ fn load_audio(registry: &Store, prefix: &str, audio: &mut AudioSettings) {
     audio.device = registry.string(&format!("{prefix}_device"), "Auto");
     audio.gain = registry
         .dword(&format!("{prefix}_gain"), audio.gain)
-        .clamp(0, 300);
+        .clamp(0, media::GAIN_MAX);
     audio.system_device = registry.string(&format!("{prefix}_system_device"), "auto");
     audio.system_gain = registry
         .dword(&format!("{prefix}_system_gain"), audio.system_gain)
-        .clamp(0, 300);
+        .clamp(0, media::GAIN_MAX);
 }
 
 fn save_audio(registry: &Store, prefix: &str, audio: &AudioSettings) {
@@ -643,11 +643,11 @@ mod recording_profiles {
         settings.ui.audio.system_gain = 40;
         assert_eq!(settings.ui.audio.gain, 120);
         assert_eq!(settings.ui.audio.system_gain, 40);
-        settings.ui.audio.system_gain = 300;
+        settings.ui.audio.system_gain = 200;
         assert_eq!(settings.ui.audio.gain, 120, "the microphone is untouched");
         settings.ui.audio.gain = 0;
         assert_eq!(
-            settings.ui.audio.system_gain, 300,
+            settings.ui.audio.system_gain, 200,
             "the system audio is untouched"
         );
     }

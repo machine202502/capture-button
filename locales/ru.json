@@ -120,7 +120,7 @@
     "Tray video": "Видео в трее",
     "Tray audio": "Аудио в трее",
     "Performance": "Производительность",
-    "Performance and overlay": "Производительность и оверлей",
+    "Miscellaneous": "Разное",
     "Overlay renderer": "Отрисовка оверлея",
     "Encoder threads": "Потоки кодировщика",
     "Auto": "Авто",
@@ -159,6 +159,9 @@
     "The camera returned an empty frame": "Камера вернула пустой кадр",
     "The camera frame could not be decoded": "Не удалось декодировать кадр с камеры",
     "The camera did not start within {seconds} s; the retry did not start within {seconds} s either": "Камера не запустилась за {seconds} с, повторная попытка за {seconds} с тоже не удалась",
-    "Show level in Settings": "Показывать уровень в настройках"
+    "Show level in Settings": "Показывать уровень в настройках",
+    "Volume above 100%": "Громкость выше 100%",
+    "Gain {gain}% can overload the sound and cause distortion. Press “Got it” to apply it.": "Усиление {gain}% может перегрузить звук и вызвать искажения. Нажмите «Понятно», чтобы применить.",
+    "Got it": "Понятно"
   }
 }
