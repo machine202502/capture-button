@@ -927,6 +927,12 @@ impl App {
                 }));
             }
             ui::ID_ABOUT_UPDATE => {
+                if self.controls.update_state() == platform::UpdateState::Unsupported {
+                    // A package install cannot update itself: Velopack only
+                    // manages its own installers, so point at the download page.
+                    platform::shell::open_url(&format!("{WEBSITE}#download"));
+                    return;
+                }
                 let controls = self.controls.clone();
                 platform::update::install(Box::new(move |state| {
                     controls.set_update_state(state);
